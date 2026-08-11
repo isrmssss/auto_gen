@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+*.log
+.DS_Store
+.cache/
+*.swp
+
+# Тяжёлые артефакты прогонов (если появятся локально)
+**/predictions_*.jsonl
+**/*.npz
+**/embeddings.npz
