@@ -1,0 +1,12 @@
+id: search.searxng
+title: SearXNG web search
+bundle: research
+provides: [search_web]
+requires: [archive]
+module: openrd.plugins.search_searxng
+class: Plugin
+when_to_use: Broad web search. Free self-hosted sidecar. Dedup via archive.
+description: JSON API client for a local SearXNG instance.
+tools:
+  - name: search.web
+    description: Search the web via SearXNG.

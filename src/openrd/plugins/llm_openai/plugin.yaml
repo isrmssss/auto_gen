@@ -1,0 +1,12 @@
+id: llm.openai_compat
+title: OpenAI-compatible LLM
+bundle: infra
+provides: [llm]
+requires: []
+module: openrd.plugins.llm_openai
+class: Plugin
+when_to_use: All model calls. Roles orchestrator/researcher/critic/coder.
+description: Polza/OpenAI/Ollama chat completions with per-call usage and cost ledger.
+tools:
+  - name: llm.complete
+    description: Internal service, not a model-facing tool.

@@ -1,0 +1,9 @@
+id: memory.journal
+title: Event journal
+bundle: memory
+provides: [journal]
+requires: []
+module: openrd.plugins.memory_journal
+class: Plugin
+when_to_use: Persist every thought, search, run. Resume = replay.
+description: Append-only event log backed by SQLite. Source of truth for a project.

@@ -1,0 +1,9 @@
+id: embed.local
+title: Local embeddings
+bundle: infra
+provides: [embed]
+requires: []
+module: openrd.plugins.embed_local
+class: Plugin
+when_to_use: Fingerprints, archive search, cemetery similarity. Never billed.
+description: Hashing-trick embeddings; optional sentence-transformers if installed.

@@ -1,0 +1,25 @@
+# OpenRD SearXNG sidecar — JSON API enabled for the agent.
+use_default_settings: true
+server:
+  secret_key: "openrd-dev-change-me"
+  limiter: false
+  image_proxy: false
+search:
+  formats:
+    - html
+    - json
+engines:
+  - name: duckduckgo
+    disabled: false
+  - name: brave
+    disabled: false
+  - name: wikidata
+    disabled: false
+  - name: wikipedia
+    disabled: false
+  - name: github
+    disabled: false
+  - name: arxiv
+    disabled: false
+  - name: semantic scholar
+    disabled: false

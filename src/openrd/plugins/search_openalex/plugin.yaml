@@ -1,0 +1,9 @@
+id: search.openalex
+title: OpenAlex
+bundle: research
+provides: [search_openalex]
+requires: [archive]
+module: openrd.plugins.search_openalex
+class: Plugin
+when_to_use: Open scholarly graph, venue and concept filters.
+description: Free OpenAlex works API.

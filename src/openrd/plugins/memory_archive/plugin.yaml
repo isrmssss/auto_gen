@@ -1,0 +1,12 @@
+id: memory.archive
+title: Archival hybrid search
+bundle: memory
+provides: [archive]
+requires: [embed]
+module: openrd.plugins.memory_archive
+class: Plugin
+when_to_use: Retrieve papers, past hypotheses, cemetery, prior searches without stuffing context.
+description: BM25 + embedding archive with URL/query canonical keys.
+tools:
+  - name: memory.search
+    description: Search project archive by query.

@@ -1,0 +1,9 @@
+id: rnd.coder
+title: Sandbox coder
+bundle: rnd
+provides: [coder]
+requires: [llm, sandbox, safety]
+module: openrd.plugins.rnd_coder
+class: Plugin
+when_to_use: After select. Write treatment.py in the sandbox. Sample-first then full.
+description: "Generates code that prints METRICS JSON. Max debug depth from settings."

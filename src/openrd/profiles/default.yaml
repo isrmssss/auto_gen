@@ -1,0 +1,35 @@
+name: default
+bundles:
+  - llm.openai_compat
+  - embed.local
+  - memory.journal
+  - memory.core
+  - memory.archive
+  - memory.graph
+  - memory.compiler
+  - search.searxng
+  - search.arxiv
+  - search.s2
+  - search.openalex
+  - search.github
+  - search.planner
+  - search.ranker
+  - ingest.docling
+  - ingest.user_artifacts
+  - safety.policy
+  - sandbox.docker
+  - scheduler.hw
+  - tracker.runs
+  - mcp.client
+  - human.steer
+  - rnd.quality_bar
+  - rnd.scientist
+  - rnd.debate
+  - rnd.virtual_eval
+  - rnd.search_policy
+  - rnd.coder
+  - rnd.analyst
+  - rnd.orchestrator
+  - domain.ml_competition
+  - domain.product_eval
+  - domain.general_research

@@ -1,0 +1,10 @@
+id: mcp.client
+title: MCP client
+bundle: infra
+provides: [mcp]
+requires: []
+module: openrd.plugins.mcp_client
+class: Plugin
+optional: true
+when_to_use: Attach extra tools from a local MCP server listed in project config.
+description: Minimal JSON-RPC MCP stdio client. Servers are optional.

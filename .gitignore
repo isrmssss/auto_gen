@@ -1,15 +1,41 @@
 __pycache__/
 *.py[cod]
+*$py.class
 *.egg-info/
+.eggs/
 .venv/
 venv/
 .env
+.env.local
 *.log
 .DS_Store
 .cache/
 *.swp
+.pytest_cache/
+pytest-cache-files-*/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
 
-# Тяжёлые артефакты прогонов (если появятся локально)
+# Local product data (workspaces, sqlite, secrets)
+/data/
+/workspaces/
+
+# UI
+ui/node_modules/
+ui/dist/
+ui/.vite/
+
+# Heavy run artifacts
 **/predictions_*.jsonl
 **/*.npz
 **/embeddings.npz
+**/*.parquet
+
+# IDE
+.idea/
+.vscode/
+*.iml

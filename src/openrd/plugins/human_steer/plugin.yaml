@@ -1,0 +1,9 @@
+id: human.steer
+title: Human steer
+bundle: control
+provides: [human]
+requires: [journal]
+module: openrd.plugins.human_steer
+class: Plugin
+when_to_use: Inject questions, papers, pause/resume, rollback to a tree node without killing research.
+description: Inbox of human messages consumed by the orchestrator each loop.

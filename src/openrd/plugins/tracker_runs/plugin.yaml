@@ -1,0 +1,9 @@
+id: tracker.runs
+title: Experiment tracker
+bundle: infra
+provides: [tracker]
+requires: [journal]
+module: openrd.plugins.tracker_runs
+class: Plugin
+when_to_use: Log params, metrics, compare vs champion/control, bootstrap CI.
+description: ClearML-like run records without an external server.

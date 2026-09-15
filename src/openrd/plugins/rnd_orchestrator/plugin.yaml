@@ -1,0 +1,9 @@
+id: rnd.orchestrator
+title: R&D orchestrator
+bundle: rnd
+provides: [orchestrator]
+requires: [journal, compiler, scheduler]
+module: openrd.plugins.rnd_orchestrator
+class: Plugin
+when_to_use: Owns the DAG. Does not write experiment code. Assigns unique lines to think agents.
+description: Blackboard orchestrator wrapping ProjectRuntime.

@@ -1,0 +1,9 @@
+id: search.s2
+title: Semantic Scholar
+bundle: research
+provides: [search_s2]
+requires: [archive]
+module: openrd.plugins.search_s2
+class: Plugin
+when_to_use: Citation-aware paper search. Free tier, 1 rps.
+description: Semantic Scholar Graph API without a paid key.

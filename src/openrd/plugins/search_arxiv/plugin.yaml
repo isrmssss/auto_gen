@@ -1,0 +1,9 @@
+id: search.arxiv
+title: arXiv
+bundle: research
+provides: [search_arxiv]
+requires: [archive]
+module: openrd.plugins.search_arxiv
+class: Plugin
+when_to_use: Academic preprints, methods, recent ML papers.
+description: Free arXiv Atom API. No key.

@@ -1,0 +1,9 @@
+id: domain.ml_competition
+title: ML competition domain
+bundle: domain
+provides: [domain_ml]
+requires: []
+module: openrd.plugins.domain_ml
+class: Plugin
+when_to_use: Kaggle/hackathon style goals with a scalar metric and splits.
+description: Prompts and KPI helpers for competitions (RMSLE, AUC, screen-on-sample).

@@ -1,0 +1,9 @@
+id: rnd.scientist
+title: Scientific hypothesizer
+bundle: rnd
+provides: [scientist]
+requires: [llm, compiler]
+module: openrd.plugins.rnd_scientist
+class: Plugin
+when_to_use: "After research. Four-step scientific reasoning (analyze, problem, mechanism, sketch)."
+description: RD-Agent scientific reasoning. Outputs typed hypotheses (refine/pivot/explore).

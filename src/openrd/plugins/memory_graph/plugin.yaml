@@ -1,0 +1,9 @@
+id: memory.graph
+title: Research graph
+bundle: memory
+provides: [graph]
+requires: []
+module: openrd.plugins.memory_graph
+class: Plugin
+when_to_use: Link Goal–Line–Hypothesis–Run–Paper–Claim.
+description: Lightweight typed graph stored in SQLite.

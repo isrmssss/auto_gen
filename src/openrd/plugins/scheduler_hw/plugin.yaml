@@ -1,0 +1,9 @@
+id: scheduler.hw
+title: Hardware scheduler
+bundle: infra
+provides: [scheduler]
+requires: []
+module: openrd.plugins.scheduler_hw
+class: Plugin
+when_to_use: Before launching exec slots. Think pool is separate from exec pool.
+description: RAM/GPU probe, backpressure, exec-slot clamp.

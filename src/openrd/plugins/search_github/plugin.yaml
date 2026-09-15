@@ -1,0 +1,9 @@
+id: search.github
+title: GitHub code search
+bundle: research
+provides: [search_github]
+requires: [archive]
+module: openrd.plugins.search_github
+class: Plugin
+when_to_use: Find implementations, stars as a weak quality prior. Unauthenticated rate limits apply.
+description: GitHub repository search API (no token required, limited).

@@ -1,0 +1,9 @@
+id: memory.compiler
+title: Prompt compiler
+bundle: memory
+provides: [compiler]
+requires: [memory_core, archive, journal]
+module: openrd.plugins.memory_compiler
+class: Plugin
+when_to_use: Build the LLM brief. Never dump the full journal.
+description: AIDE-style Σ(T) compiler with hard token budgets.

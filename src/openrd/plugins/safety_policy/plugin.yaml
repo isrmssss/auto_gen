@@ -1,0 +1,9 @@
+id: safety.policy
+title: Safety policy
+bundle: infra
+provides: [safety]
+requires: []
+module: openrd.plugins.safety_policy
+class: Plugin
+when_to_use: Before writing or executing any treatment. Block malware, exploits, exfil, host escape.
+description: Static AST/regex gates plus a hypothesis intent check. Payloads never run.

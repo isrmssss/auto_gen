@@ -1,0 +1,9 @@
+id: search.planner
+title: Query planner
+bundle: research
+provides: [search_planner]
+requires: [llm]
+module: openrd.plugins.search_planner
+class: Plugin
+when_to_use: Before search. Expand one task into 8–10 targeted queries.
+description: Multi-query reformulation (method, domain, code, papers, failure modes).

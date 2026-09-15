@@ -1,0 +1,9 @@
+id: rnd.debate
+title: Multi-agent debate
+bundle: rnd
+provides: [debate]
+requires: [llm]
+module: openrd.plugins.rnd_debate
+class: Plugin
+when_to_use: After ideate. Steelman, red-team, novelty. Veto weak ideas.
+description: Parallel think roles with a critic veto. Assigns distinct slices so agents do not duplicate.

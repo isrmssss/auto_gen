@@ -1,0 +1,9 @@
+id: rnd.analyst
+title: Error analyst
+bundle: rnd
+provides: [analyst]
+requires: [llm, tracker]
+module: openrd.plugins.rnd_analyst
+class: Plugin
+when_to_use: After a run. persist / fixed / regress vs champion. Update briefs and cemetery.
+description: Encodes the old knowledge-cycle research pack as a service.

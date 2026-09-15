@@ -1,0 +1,9 @@
+id: search.ranker
+title: Quality ranker
+bundle: research
+provides: [search_ranker]
+requires: [archive]
+module: openrd.plugins.search_ranker
+class: Plugin
+when_to_use: After multi-source search. Rank by recency, venue, citations/stars, has-code, approach diversity — not blog popularity.
+description: Rubric ranker that also drops duplicate URLs.

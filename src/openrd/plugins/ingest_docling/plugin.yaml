@@ -1,0 +1,9 @@
+id: ingest.docling
+title: Document ingest
+bundle: research
+provides: [ingest]
+requires: [archive]
+module: openrd.plugins.ingest_docling
+class: Plugin
+when_to_use: PDF/office/markdown dropped by the user or fetched papers. Chunk then extract claims. Never one-shot a 200-page paper.
+description: Docling if installed, else markdown/text fallback with sectional chunking.

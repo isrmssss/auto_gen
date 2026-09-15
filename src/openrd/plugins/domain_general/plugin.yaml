@@ -1,0 +1,9 @@
+id: domain.general_research
+title: General research domain
+bundle: domain
+provides: [domain_general]
+requires: []
+module: openrd.plugins.domain_general
+class: Plugin
+when_to_use: Non-ML goals (proofs, decipherment, design). Need a verifiable artifact.
+description: Artifact/proof checklist instead of a scalar ML metric.

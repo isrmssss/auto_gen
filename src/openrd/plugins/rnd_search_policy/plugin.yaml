@@ -1,0 +1,9 @@
+id: rnd.search_policy
+title: Line search policy
+bundle: rnd
+provides: [search_policy]
+requires: []
+module: openrd.plugins.rnd_search_policy
+class: Plugin
+when_to_use: Choose whether to refine the champion line, pivot, or explore. Not pure greedy.
+description: ε-greedy + UCB over mechanism lines. Blocks refine loops.

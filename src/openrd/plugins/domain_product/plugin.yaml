@@ -1,0 +1,9 @@
+id: domain.product_eval
+title: Product evaluation domain
+bundle: domain
+provides: [domain_product]
+requires: []
+module: openrd.plugins.domain_product
+class: Plugin
+when_to_use: Batch product metrics with hard constraints (e.g. FG/FR/Y).
+description: Multi-metric operating-point domain like a production censor.

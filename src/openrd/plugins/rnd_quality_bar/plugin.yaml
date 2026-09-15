@@ -1,0 +1,9 @@
+id: rnd.quality_bar
+title: Quality bar
+bundle: rnd
+provides: [quality_bar]
+requires: [llm]
+module: openrd.plugins.rnd_quality_bar
+class: Plugin
+when_to_use: After a hypothesis is drafted. Reject naive baselines when the goal is top-1 / compound SOTA.
+description: Configurable rigor. Compound-mechanism requirement.

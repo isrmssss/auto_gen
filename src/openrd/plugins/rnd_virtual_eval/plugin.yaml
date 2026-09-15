@@ -1,0 +1,9 @@
+id: rnd.virtual_eval
+title: Virtual evaluation
+bundle: rnd
+provides: [virtual_eval]
+requires: [llm]
+module: openrd.plugins.rnd_virtual_eval
+class: Plugin
+when_to_use: Pick 1 of K ideas to implement. Score novelty*0.3 + feasibility*0.3 + impact*0.4.
+description: Saves tokens vs coding every idea.

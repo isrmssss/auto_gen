@@ -1,0 +1,9 @@
+id: sandbox.docker
+title: Experiment sandbox
+bundle: infra
+provides: [sandbox]
+requires: [safety]
+module: openrd.plugins.sandbox_docker
+class: Plugin
+when_to_use: Run generated code. Isolated workspace, memory/time limits, network deny-by-default.
+description: Docker if available, else local subprocess in the project work dir with rlimits.

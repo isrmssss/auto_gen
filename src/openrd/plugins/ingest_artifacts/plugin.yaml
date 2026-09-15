@@ -1,0 +1,9 @@
+id: ingest.user_artifacts
+title: User artifact drop
+bundle: research
+provides: [artifacts]
+requires: [ingest, archive]
+module: openrd.plugins.ingest_artifacts
+class: Plugin
+when_to_use: Mid-run PDF/idea injection from the UI.
+description: Registers uploaded files into the project workspace and archive.

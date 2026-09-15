@@ -1,0 +1,9 @@
+id: memory.core
+title: Core memory blocks
+bundle: memory
+provides: [memory_core]
+requires: [journal]
+module: openrd.plugins.memory_core
+class: Plugin
+when_to_use: Patch small always-on blocks (goal, champion, bans). Never dump INDEX into context.
+description: Letta-style RAM blocks with a hard size budget.
