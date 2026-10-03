@@ -31,11 +31,12 @@ from openrd.core.loader import load_into
 from openrd.core.profile import load_profile, profiles_dir
 from openrd.db.store import Store, get_store
 from openrd.engine.knowledge import export_knowledge
-from openrd.paths import project_workspace
+from openrd.paths import paper_cache_dir
+from openrd.plugins.search_common import extractive_card, sources_for_intent
 from openrd.settings import settings
-from openrd.util.canon import canon_query, fingerprint_text, mechanism_key
+from openrd.util.canon import fingerprint_text, mechanism_key
 from openrd.util.embed import hashing_embed
-
+from openrd.util.text import clip_tokens
 
 PHASES = [
     "understand",
@@ -256,43 +257,81 @@ class ProjectRuntime:
         archive = self.ctx.get("archive")
         if not planner:
             return
-        queries = await planner.plan(p["goal"], extra=(self.ctx.require("memory_core").get().get("open_questions") if self.ctx.has("memory_core") else "") or "")
-        sources = [
-            ("search_arxiv", self.ctx.get("search_arxiv")),
-            ("search_s2", self.ctx.get("search_s2")),
-            ("search_openalex", self.ctx.get("search_openalex")),
-            ("search_github", self.ctx.get("search_github")),
-            ("search_web", self.ctx.get("search_web")),
-        ]
+        memory = ""
+        if self.ctx.has("memory_core"):
+            memory = self.ctx.require("memory_core").get().get("open_questions") or ""
+        digest = archive.digest() if archive and hasattr(archive, "digest") else ""
+        queries = await planner.plan(p["goal"], extra=clip_tokens(f"{memory}\n\n{digest}", 800))
+        available = {
+            name: self.ctx.get(name)
+            for name in (
+                "search_arxiv",
+                "search_s2",
+                "search_openalex",
+                "search_github",
+                "search_web",
+                "search_crossref",
+                "search_dblp",
+                "search_openreview",
+                "search_eupmc",
+                "search_pubmed",
+                "search_zenodo",
+                "search_hal",
+                "search_doaj",
+            )
+            if self.ctx.get(name) is not None
+        }
         hits: list[dict[str, Any]] = []
 
         async def run_one(q: dict[str, Any]) -> None:
             query = q["q"]
-            if archive and archive.seen_query(query):
-                await self.emit(SEARCH_SKIPPED, {"query": query, "reason": "duplicate_query"})
+            if archive and not archive.claim_query(query):
+                await self.emit(SEARCH_SKIPPED, {"query": query, "reason": "already tried"})
                 return
             await self.emit(SEARCH_QUERY, {"query": query, "intent": q.get("intent")})
-            if archive:
-                archive.add("search", query, query, query=query)
-            for name, svc in sources:
-                if svc is None:
-                    continue
+            chosen = sources_for_intent(q.get("intent") or "papers", query, set(available))
+            for name in chosen:
+                svc = available[name]
                 try:
                     batch = await svc.search(query, count=5)
-                except Exception as e:
-                    await self.emit(THOUGHT, {"text": f"{name} failed: {e}"})
+                except Exception as exc:
+                    await self.emit(THOUGHT, {"text": f"{name} failed: {exc}"})
                     continue
-                for h in batch:
-                    url = h.get("url") or ""
+                for raw in batch:
+                    hit = dict(raw)
+                    key = str(hit.get("paper_key") or "")
+                    url = hit.get("url") or ""
+                    title = (hit.get("title") or "")[:160]
+                    if archive and key and not archive.remember("paper", key, title=title):
+                        await self.emit(
+                            SEARCH_SKIPPED,
+                            {"paper_key": key, "reason": "already have this paper"},
+                        )
+                        continue
                     if archive and url and archive.seen_url(url):
                         await self.emit(SEARCH_SKIPPED, {"url": url, "reason": "duplicate_url"})
                         continue
-                    if not self.store.claim(self.project_id, "url", h.get("url_canon") or url, "research"):
+                    claimed = hit.get("url_canon") or url
+                    if url and not self.store.claim(self.project_id, "url", claimed, "research"):
                         continue
-                    hits.append(h)
-                    if archive and url:
-                        archive.add("paper", h.get("title") or url, h.get("snippet") or "", url=url, query=query)
-                    await self.emit(SEARCH_HIT, h)
+                    hits.append(hit)
+                    if archive and (url or key):
+                        archive.add(
+                            "paper",
+                            hit.get("title") or url or key,
+                            hit.get("snippet") or "",
+                            url=url or None,
+                            query=query,
+                        )
+                    await self.emit(
+                        SEARCH_HIT,
+                        {
+                            "title": hit.get("title"),
+                            "source": hit.get("source"),
+                            "paper_key": key,
+                            "url": url,
+                        },
+                    )
 
         sched = self.ctx.get("scheduler")
         if sched:
@@ -300,9 +339,86 @@ class ProjectRuntime:
         else:
             for q in queries[:8]:
                 await run_one(q)
+        ranked: list[dict[str, Any]] = hits
         if ranker:
             ranked = ranker.rank(hits)
-            await self.emit(THOUGHT, {"text": f"ranked {len(ranked)} unique hits", "top": ranked[:5]})
+            await self.emit(
+                THOUGHT,
+                {"text": f"ranked {len(ranked)} new hits", "top": [h.get("title") for h in ranked[:5]]},
+            )
+        await self._read_fulltexts(ranked, p["goal"])
+
+    async def _read_fulltexts(self, ranked: list[dict[str, Any]], focus: str) -> None:
+        archive = self.ctx.get("archive")
+        budget = settings.fulltext_per_cycle
+        done = 0
+        for hit in ranked:
+            if done >= budget:
+                break
+            key = str(hit.get("paper_key") or "")
+            reader = self._reader_for(hit)
+            if not key or reader is None:
+                continue
+            if archive and archive.known("fetch", key):
+                continue
+            try:
+                result = await reader.read(hit)
+            except Exception as exc:
+                result = {"ok": False, "reason": str(exc)[:180]}
+            if archive:
+                note = (result.get("reason") or "read")[:180]
+                archive.remember(
+                    "fetch",
+                    key,
+                    title=(hit.get("title") or key)[:160],
+                    note=note,
+                )
+            if not result.get("ok") or not result.get("text"):
+                await self.emit(
+                    THOUGHT,
+                    {"text": f"Could not read {hit.get('title') or key}", "paper_key": key},
+                )
+                continue
+            card = extractive_card(result["text"], focus, source=key, limit=settings.paper_card_chars)
+            self._store_paper(key, result["text"])
+            if archive:
+                archive.add("paper_card", hit.get("title") or key, card, url=hit.get("url") or None)
+            await self.emit(
+                PAPER_INGESTED,
+                {"paper_key": key, "title": hit.get("title"), "card": True},
+            )
+            await self.emit(
+                THOUGHT,
+                {
+                    "text": (
+                        f"Read {hit.get('source') or 'source'} «{hit.get('title') or key}». "
+                        "Only a short card goes to the model."
+                    ),
+                    "paper_key": key,
+                },
+            )
+            done += 1
+
+    def _reader_for(self, hit: dict[str, Any]) -> Any | None:
+        if hit.get("arxiv_id"):
+            return self.ctx.get("search_arxiv")
+        if hit.get("pmcid"):
+            return self.ctx.get("search_eupmc")
+        if hit.get("openreview_id"):
+            return self.ctx.get("search_openreview")
+        return None
+
+    def _store_paper(self, key: str, text: str) -> None:
+        import re
+
+        safe = re.sub(r"[^A-Za-z0-9._-]+", "_", key)[:120] or "paper"
+        path = paper_cache_dir(self.project_id) / f"{safe}.md"
+        fenced = (
+            f'<untrusted_source ref="{safe}">\n'
+            f"{text[: settings.paper_disk_chars]}\n"
+            "</untrusted_source>\n"
+        )
+        path.write_text(fenced, encoding="utf-8")
 
     async def phase_ideate(self) -> None:
         scientist = self.ctx.get("scientist")
@@ -313,7 +429,30 @@ class ProjectRuntime:
         if policy:
             raw = policy.filter_portfolio(raw)
         self.current_hyps = raw
+        kept: list[dict[str, Any]] = []
+        archive = self.ctx.get("archive")
         for h in raw:
+            fp = fingerprint_text(h.get("mechanism") or "", h.get("text") or "")
+            mkey = mechanism_key(h.get("mechanism") or "")
+            if fp and self.store.has_hypothesis_fingerprint(self.project_id, fp):
+                await self.emit(
+                    HYPOTHESIS_REJECTED,
+                    {"reason": "exact hypothesis already tried", "mechanism": h.get("mechanism")},
+                )
+                continue
+            title = (h.get("mechanism") or "")[:160]
+            if archive and mkey and not archive.remember("mechanism", mkey, title=title):
+                await self.emit(
+                    HYPOTHESIS_REJECTED,
+                    {"reason": "mechanism already tried", "mechanism": h.get("mechanism")},
+                )
+                continue
+            if archive and fp:
+                archive.remember("hypothesis", fp, title=(h.get("mechanism") or "")[:160])
+            h["fingerprint"] = fp
+            kept.append(h)
+        self.current_hyps = kept
+        for h in kept:
             node = self.tree(
                 parent_id=self.root_id,
                 kind="hypothesis",

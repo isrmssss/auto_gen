@@ -11,6 +11,7 @@ bundles:
   - search.arxiv
   - search.s2
   - search.openalex
+  - search.oa
   - search.github
   - search.planner
   - search.ranker

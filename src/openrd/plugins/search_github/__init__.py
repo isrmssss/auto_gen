@@ -5,7 +5,7 @@ from typing import Any
 import httpx
 
 from openrd.core.context import Context
-from openrd.util.canon import canon_query, canon_url
+from openrd.plugins.search_common import make_hit
 
 
 class GithubService:
@@ -25,16 +25,15 @@ class GithubService:
         for item in data.get("items") or []:
             url = item.get("html_url") or ""
             hits.append(
-                {
-                    "title": item.get("full_name") or "",
-                    "url": url,
-                    "url_canon": canon_url(url),
-                    "snippet": item.get("description") or "",
-                    "stars": item.get("stargazers_count") or 0,
-                    "language": item.get("language"),
-                    "source": "github",
-                    "query_canon": canon_query(query),
-                }
+                make_hit(
+                    title=item.get("full_name") or "",
+                    url=url,
+                    query=query,
+                    source="github",
+                    snippet=item.get("description") or "",
+                    stars=item.get("stargazers_count") or 0,
+                    language=item.get("language") or "",
+                )
             )
         return hits
 

@@ -4,9 +4,14 @@ from typing import Any
 
 from openrd.core.context import Context
 from openrd.db.store import get_store
-from openrd.util.canon import canon_query, canon_url
+from openrd.settings import settings
+from openrd.util.canon import canon_query, canon_url, query_signature
 from openrd.util.embed import cosine
 from openrd.util.text import bm25_scores
+
+# Snippets and cards only. Full papers stay on disk and out of this index.
+RECALL_KINDS = ("paper_card", "paper", "note", "lesson")
+MECH_KINDS = ("hypothesis", "cemetery", "mechanism")
 
 
 class ArchiveService:
@@ -25,13 +30,17 @@ class ArchiveService:
         url_canon = canon_url(url) if url else None
         query = meta.get("query")
         query_canon = canon_query(query) if query else None
-        embedding = self.embed.embed(f"{title}\n{body}") if self.embed else None
+        clipped = (body or "")[: settings.archive_body_chars]
+        embed_text = f"{title}\n{clipped}".strip()
+        embedding = None
+        if self.embed and embed_text and kind != "search":
+            embedding = self.embed.embed(embed_text)
         return self.store.add_archive(
             {
                 "project_id": self.project_id,
                 "kind": kind,
-                "title": title,
-                "body": body,
+                "title": (title or "")[:300],
+                "body": clipped,
                 "url": url,
                 "url_canon": url_canon,
                 "query_canon": query_canon,
@@ -40,30 +49,63 @@ class ArchiveService:
             }
         )
 
+    def remember(self, kind: str, key: str, title: str = "", note: str = "") -> bool:
+        assert self.project_id
+        return self.store.remember_key(self.project_id, kind, key, title=title, note=note)
+
+    def known(self, kind: str, key: str) -> bool:
+        assert self.project_id
+        return self.store.known_key(self.project_id, kind, key)
+
     def seen_url(self, url: str) -> bool:
         assert self.project_id
         return self.store.find_archive_url(self.project_id, canon_url(url)) is not None
 
     def seen_query(self, query: str) -> bool:
         assert self.project_id
+        if self.known("query_sig", query_signature(query)):
+            return True
         return self.store.find_archive_query(self.project_id, canon_query(query)) is not None
+
+    def claim_query(self, query: str) -> bool:
+        """True only the first time this query (or a rephrase) is attempted."""
+        if self.seen_query(query):
+            return False
+        return self.remember("query_sig", query_signature(query), title=canon_query(query)[:180])
+
+    def digest(self, limit: int = 8) -> str:
+        """Short index for the planner. Titles only, never paper bodies."""
+        assert self.project_id
+        counts = self.store.recall_counts(self.project_id)
+        recent = self.store.recent_recall(self.project_id, limit)
+        bits = [f"{kind}={count}" for kind, count in sorted(counts.items()) if count]
+        lines = ["Already tried (do not repeat): " + (", ".join(bits) or "nothing yet")]
+        for row in recent:
+            title = (row.get("title") or row.get("key") or "")[:100]
+            lines.append(f"- {row['kind']}: {title}")
+        return "\n".join(lines)
 
     def search(self, query: str, k: int = 8, kind: str | None = None) -> list[dict[str, Any]]:
         assert self.project_id
-        docs = self.store.list_archive(self.project_id, kind=kind)
+        if kind:
+            docs = self.store.list_archive_kinds(self.project_id, [kind], limit=80)
+        else:
+            docs = self.store.list_archive_kinds(self.project_id, list(RECALL_KINDS), limit=80)
         if not docs:
             return []
-        bm25 = {did: s for did, s in bm25_scores(query, ((d["id"], f"{d['title']}\n{d['body']}") for d in docs))}
+        pairs = ((d["id"], f"{d['title']}\n{d['body']}") for d in docs)
+        bm25 = {did: score for did, score in bm25_scores(query, pairs)}
         qvec = self.embed.embed(query) if self.embed else None
         scored = []
-        for d in docs:
-            b = bm25.get(d["id"], 0.0)
-            c = cosine(qvec, d.get("embedding")) if qvec is not None else 0.0
-            scored.append((0.55 * b + 0.45 * c * 10, d))
-        scored.sort(key=lambda x: x[0], reverse=True)
+        for doc in docs:
+            lexical = bm25.get(doc["id"], 0.0)
+            semantic = cosine(qvec, doc.get("embedding")) if qvec is not None else 0.0
+            bonus = 0.4 if doc.get("kind") == "paper_card" else 0.0
+            scored.append((0.55 * lexical + 0.45 * semantic * 10 + bonus, doc))
+        scored.sort(key=lambda item: item[0], reverse=True)
         out = []
-        for score, d in scored[:k]:
-            item = dict(d)
+        for score, doc in scored[:k]:
+            item = dict(doc)
             item["score"] = score
             item.pop("embedding", None)
             out.append(item)
@@ -74,13 +116,11 @@ class ArchiveService:
         vec = self.embed.embed(text)
         best = None
         best_s = threshold
-        for d in self.store.iter_archive_with_embeddings(self.project_id):
-            if d["kind"] not in ("hypothesis", "cemetery", "mechanism"):
-                continue
-            s = cosine(vec, d.get("embedding"))
-            if s >= best_s:
-                best_s = s
-                best = {**d, "similarity": s}
+        for doc in self.store.iter_archive_with_embeddings(self.project_id, MECH_KINDS):
+            score = cosine(vec, doc.get("embedding"))
+            if score >= best_s:
+                best_s = score
+                best = {**doc, "similarity": score}
                 best.pop("embedding", None)
         return best
 

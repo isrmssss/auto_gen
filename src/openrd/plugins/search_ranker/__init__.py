@@ -23,7 +23,7 @@ class Ranker:
         scored = []
         approaches: list[str] = []
         for h in hits:
-            key = h.get("url_canon") or h.get("url") or h.get("title")
+            key = h.get("paper_key") or h.get("url_canon") or h.get("url") or h.get("title")
             if not key or key in seen:
                 continue
             seen.add(key)
@@ -40,8 +40,10 @@ class Ranker:
             cites = float(h.get("citations") or 0)
             stars = float(h.get("stars") or 0)
             score += min(4.0, (cites**0.5) / 4 + (stars**0.5) / 8)
-            if h.get("pdf") or h.get("source") in ("arxiv", "s2", "openalex"):
+            if h.get("pdf") or h.get("source") in ("arxiv", "s2", "openalex", "openreview", "eupmc"):
                 score += 2
+            if h.get("arxiv_id") or h.get("pmcid") or h.get("openreview_id"):
+                score += 1.5
             if h.get("source") == "github" and stars >= 100:
                 score += 1.5
             title = (h.get("title") or "").lower()

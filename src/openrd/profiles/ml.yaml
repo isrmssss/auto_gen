@@ -9,6 +9,7 @@ bundles:
   - memory.compiler
   - search.arxiv
   - search.s2
+  - search.oa
   - search.github
   - search.planner
   - search.ranker

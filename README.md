@@ -49,7 +49,7 @@ docker compose -f deploy/docker-compose.yml up --build
 
 Micro-kernel (`Context`: services, events, reversible plugins) + YAML **profiles**. Adding a source is a plugin folder + one bundle line. The LLM sees the generated catalog.
 
-Default plugins: LLM (OpenAI-compat), local embeddings, journal/core/archive/graph/compiler memory, SearXNG/arXiv/S2/OpenAlex/GitHub, Docling ingest, safety, sandbox, HW scheduler, tracker, MCP client, human steer, scientist/debate/virtual-eval/quality-bar/coder/analyst/orchestrator, ML / product / general-research domains.
+Default plugins: LLM (OpenAI-compat), local embeddings, journal/core/archive/graph/compiler memory, SearXNG/arXiv/Semantic Scholar/OpenAlex/Crossref/DBLP/OpenReview/Europe PMC/PubMed/Zenodo/HAL/DOAJ/GitHub, Docling ingest, safety, sandbox, HW scheduler, tracker, MCP client, human steer, scientist/debate/virtual-eval/quality-bar/coder/analyst/orchestrator, ML / product / general-research domains. arXiv HTML, OpenReview PDFs, and Europe PMC full text are fetched only from an allowlist; the model sees a short card, not the raw page.
 
 ## Eval (1–2 hour smoke, no paid search)
 

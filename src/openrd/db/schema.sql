@@ -74,6 +74,18 @@ CREATE INDEX IF NOT EXISTS idx_archive_project_kind ON archive_docs(project_id, 
 CREATE INDEX IF NOT EXISTS idx_archive_url ON archive_docs(project_id, url_canon);
 CREATE INDEX IF NOT EXISTS idx_archive_query ON archive_docs(project_id, query_canon);
 
+CREATE TABLE IF NOT EXISTS recall_keys (
+  project_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  key TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, kind, key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_recall_project_kind ON recall_keys(project_id, kind);
+
 CREATE TABLE IF NOT EXISTS graph_nodes (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,

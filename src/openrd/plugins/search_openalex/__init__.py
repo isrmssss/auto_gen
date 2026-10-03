@@ -5,7 +5,21 @@ from typing import Any
 import httpx
 
 from openrd.core.context import Context
-from openrd.util.canon import canon_query, canon_url
+from openrd.plugins.search_common import make_hit
+
+
+def _abstract(item: dict[str, Any]) -> str:
+    plain = item.get("abstract")
+    if isinstance(plain, str) and plain:
+        return plain
+    inverted = item.get("abstract_inverted_index")
+    if not isinstance(inverted, dict):
+        return ""
+    words: dict[int, str] = {}
+    for word, positions in inverted.items():
+        for pos in positions or []:
+            words[int(pos)] = word
+    return " ".join(words[i] for i in sorted(words))
 
 
 class OpenAlexService:
@@ -16,28 +30,28 @@ class OpenAlexService:
             "sort": "cited_by_count:desc",
             "mailto": "openrd@localhost",
         }
-        async with httpx.AsyncClient(timeout=40) as client:
-            r = await client.get("https://api.openalex.org/works", params=params)
-            r.raise_for_status()
-            data = r.json()
+        async with httpx.AsyncClient(timeout=40, follow_redirects=False) as client:
+            response = await client.get("https://api.openalex.org/works", params=params)
+            response.raise_for_status()
+            data = response.json()
         hits = []
         for item in data.get("results") or []:
-            url = (item.get("primary_location") or {}).get("landing_page_url") or item.get("id") or ""
-            pdf = (item.get("primary_location") or {}).get("pdf_url")
+            location = item.get("primary_location") or {}
+            url = location.get("landing_page_url") or item.get("id") or ""
+            ids = item.get("ids") or {}
             hits.append(
-                {
-                    "title": item.get("display_name") or "",
-                    "url": url,
-                    "url_canon": canon_url(url or ""),
-                    "snippet": (item.get("abstract") or "")[:800]
-                    if isinstance(item.get("abstract"), str)
-                    else "",
-                    "year": (item.get("publication_year")),
-                    "citations": item.get("cited_by_count") or 0,
-                    "pdf": pdf,
-                    "source": "openalex",
-                    "query_canon": canon_query(query),
-                }
+                make_hit(
+                    title=item.get("display_name") or "",
+                    url=url,
+                    query=query,
+                    source="openalex",
+                    snippet=_abstract(item),
+                    pdf=location.get("pdf_url"),
+                    year=item.get("publication_year"),
+                    citations=item.get("cited_by_count") or 0,
+                    doi=ids.get("doi") or item.get("doi") or "",
+                    pmcid=str(ids.get("pmcid") or "").removeprefix("https://www.ncbi.nlm.nih.gov/pmc/articles/"),
+                )
             )
         return hits
 

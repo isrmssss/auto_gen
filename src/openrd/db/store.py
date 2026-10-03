@@ -380,12 +380,72 @@ class Store:
             (project_id,),
         )
 
-    def iter_archive_with_embeddings(self, project_id: str) -> Iterator[dict[str, Any]]:
+    def list_archive_kinds(
+        self, project_id: str, kinds: list[str], limit: int = 80
+    ) -> list[dict[str, Any]]:
+        if not kinds:
+            return []
+        marks = ",".join("?" for _ in kinds)
+        return self.query(
+            f"""SELECT id, kind, title, body, url, url_canon, embedding, created_at
+                FROM archive_docs
+                WHERE project_id=? AND kind IN ({marks})
+                ORDER BY created_at DESC LIMIT ?""",
+            (project_id, *kinds, limit),
+        )
+
+    def iter_archive_with_embeddings(
+        self, project_id: str, kinds: tuple[str, ...] | None = None
+    ) -> Iterator[dict[str, Any]]:
+        if kinds:
+            marks = ",".join("?" for _ in kinds)
+            rows = self.query(
+                f"""SELECT id, kind, title, body, embedding FROM archive_docs
+                    WHERE project_id=? AND embedding IS NOT NULL AND kind IN ({marks})""",
+                (project_id, *kinds),
+            )
+        else:
+            rows = self.query(
+                """SELECT id, kind, title, body, embedding FROM archive_docs
+                   WHERE project_id=? AND embedding IS NOT NULL""",
+                (project_id,),
+            )
+        yield from rows
+
+    def remember_key(
+        self, project_id: str, kind: str, key: str, title: str = "", note: str = ""
+    ) -> bool:
+        if not key:
+            return False
+        cur = self.execute(
+            """INSERT OR IGNORE INTO recall_keys(project_id, kind, key, title, note, created_at)
+               VALUES (?,?,?,?,?,?)""",
+            (project_id, kind, key, (title or "")[:180], (note or "")[:180], _now()),
+        )
+        return cur.rowcount == 1
+
+    def known_key(self, project_id: str, kind: str, key: str) -> bool:
+        if not key:
+            return False
+        row = self.query_one(
+            "SELECT 1 AS ok FROM recall_keys WHERE project_id=? AND kind=? AND key=?",
+            (project_id, kind, key),
+        )
+        return row is not None
+
+    def recall_counts(self, project_id: str) -> dict[str, int]:
         rows = self.query(
-            "SELECT * FROM archive_docs WHERE project_id=? AND embedding IS NOT NULL",
+            "SELECT kind, COUNT(*) AS c FROM recall_keys WHERE project_id=? GROUP BY kind",
             (project_id,),
         )
-        yield from rows
+        return {r["kind"]: int(r["c"]) for r in rows}
+
+    def recent_recall(self, project_id: str, limit: int = 8) -> list[dict[str, Any]]:
+        return self.query(
+            """SELECT kind, key, title, note FROM recall_keys
+               WHERE project_id=? ORDER BY created_at DESC LIMIT ?""",
+            (project_id, limit),
+        )
 
     # --- tree ---
     def add_tree_node(self, node: dict[str, Any]) -> dict[str, Any]:
@@ -475,6 +535,15 @@ class Store:
             ),
         )
         return self.get_hypothesis(hid)  # type: ignore
+
+    def has_hypothesis_fingerprint(self, project_id: str, fingerprint: str) -> bool:
+        if not fingerprint:
+            return False
+        row = self.query_one(
+            "SELECT id FROM hypotheses WHERE project_id=? AND fingerprint=? LIMIT 1",
+            (project_id, fingerprint),
+        )
+        return row is not None
 
     def get_hypothesis(self, hyp_id: str) -> dict[str, Any] | None:
         return self.query_one("SELECT * FROM hypotheses WHERE id=?", (hyp_id,))

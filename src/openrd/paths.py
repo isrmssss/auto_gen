@@ -33,6 +33,13 @@ def workspaces_root() -> Path:
     return root
 
 
+def paper_cache_dir(project_id: str) -> Path:
+    """Full texts live outside the prompt and outside the sandbox workdir."""
+    path = home_dir() / "paper_cache" / project_id
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def project_workspace(project_id: str) -> Path:
     path = workspaces_root() / project_id
     path.mkdir(parents=True, exist_ok=True)

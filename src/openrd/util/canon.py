@@ -50,3 +50,65 @@ def fingerprint_text(*parts: str) -> str:
 
 def mechanism_key(mechanism: str) -> str:
     return canon_query(mechanism)
+
+
+_ARXIV_URL = re.compile(
+    r"(?:arxiv\.org|ar5iv\.org|ar5iv\.labs\.arxiv\.org)/(?:abs|pdf|html|src|ftp)/([0-9]{4}\.[0-9]{4,5})(?:v[0-9]+)?",
+    re.I,
+)
+_DOI = re.compile(r"10\.\d{4,9}/[-._;()/:A-Z0-9]+", re.I)
+_STOP = frozenset(
+    """
+    the a an of and or to for in on with without from by at as is are was were be
+    this that these those how why what when where which into over under vs versus
+    using use used paper papers method methods approach review survey recent
+    state art sota via than then into about across
+    """.split()
+)
+
+
+def extract_arxiv_id(value: str) -> str:
+    match = _ARXIV_URL.search(value or "")
+    return match.group(1) if match else ""
+
+
+def normalize_doi(value: str) -> str:
+    raw = (value or "").strip()
+    raw = re.sub(r"^https?://(dx\.)?doi\.org/", "", raw, flags=re.I)
+    match = _DOI.search(raw)
+    return match.group(0).lower().rstrip(".") if match else ""
+
+
+def paper_key(
+    url: str = "",
+    doi: str = "",
+    arxiv_id: str = "",
+    pmcid: str = "",
+    openreview_id: str = "",
+    pdf: str = "",
+) -> str:
+    aid = (arxiv_id or "").strip().lower()
+    aid = re.sub(r"v\d+$", "", aid)
+    if not aid:
+        aid = extract_arxiv_id(url) or extract_arxiv_id(pdf)
+    if aid:
+        return f"arxiv:{aid}"
+    doi_n = normalize_doi(doi) or normalize_doi(url)
+    if doi_n:
+        return f"doi:{doi_n}"
+    pmc = (pmcid or "").strip().upper()
+    if pmc:
+        return f"pmc:{pmc}"
+    oid = (openreview_id or "").strip()
+    if oid:
+        return f"openreview:{oid}"
+    canon = canon_url(url)
+    return f"url:{canon}" if canon else ""
+
+
+def query_signature(query: str) -> str:
+    """Order-insensitive token key so rephrased queries count as the same attempt."""
+    tokens = sorted({t for t in re.findall(r"[a-z0-9]{3,}", canon_query(query)) if t not in _STOP})
+    if not tokens:
+        return canon_query(query)
+    return fingerprint_text(" ".join(tokens))

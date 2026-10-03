@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     novelty_cosine_block: float = 0.92
     refine_window: int = 5
     refine_max_in_window: int = 2
+    source_fanout: int = 4
+    fulltext_per_cycle: int = 2
+    paper_card_chars: int = 900
+    paper_disk_chars: int = 20000
+    archive_body_chars: int = 1500
 
     @property
     def cors_origin_list(self) -> list[str]:

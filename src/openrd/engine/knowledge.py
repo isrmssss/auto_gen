@@ -40,6 +40,10 @@ def export_knowledge(store: Store, project_id: str, dest: Path) -> None:
     for c in cemetery:
         cem_lines.append(f"- **{c['mechanism_class']}**: {c['lesson']}")
     (past / "cemetery_mechanics.md").write_text("\n".join(cem_lines) + "\n", encoding="utf-8")
+    tried = ["# Already tried\n", "Titles only. Full papers are not copied here.\n"]
+    for row in store.recent_recall(project_id, limit=40):
+        tried.append(f"- {row['kind']}: {row.get('title') or row.get('key')}")
+    (past / "tried.md").write_text("\n".join(tried) + "\n", encoding="utf-8")
     run_lines = ["# Runs\n"]
     for r in runs:
         run_lines.append(f"- `{r['id']}` {r['phase']} {r['status']} metrics={r.get('metrics')}")

@@ -5,9 +5,8 @@ from typing import Any
 import httpx
 
 from openrd.core.context import Context
-from openrd.plugins.search_common import scrub_injection
+from openrd.plugins.search_common import make_hit
 from openrd.settings import settings
-from openrd.util.canon import canon_query, canon_url
 
 
 class SearxService:
@@ -23,15 +22,14 @@ class SearxService:
         hits = []
         for item in (data.get("results") or [])[:count]:
             hits.append(
-                {
-                    "title": item.get("title") or "",
-                    "url": item.get("url") or "",
-                    "url_canon": canon_url(item.get("url") or ""),
-                    "snippet": scrub_injection(item.get("content") or ""),
-                    "source": "searxng",
-                    "engine": item.get("engine"),
-                    "query_canon": canon_query(query),
-                }
+                make_hit(
+                    title=item.get("title") or "",
+                    url=item.get("url") or "",
+                    query=query,
+                    source="searxng",
+                    snippet=item.get("content") or "",
+                    engine=item.get("engine") or "",
+                )
             )
         return hits
 
