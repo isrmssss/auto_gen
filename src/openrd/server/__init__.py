@@ -1,24 +1,33 @@
 from __future__ import annotations
 
-from __future__ import annotations
-
-from pathlib import Path
 import os
+from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
+from openrd import __version__
 from openrd.core.loader import catalog
 from openrd.db.store import get_store
 from openrd.engine.bus import get_bus
 from openrd.engine.hw import probe_dict
+from openrd.engine.ingest import ingest_upload
 from openrd.engine.worker import get_runtime
 from openrd.paths import project_workspace
-from openrd.server.schemas import PluginToggle, ProjectIn, ProviderIn, ProviderUpdate, SteerIn
+from openrd.server.schemas import (
+    AskIn,
+    AskReply,
+    PluginToggle,
+    ProjectIn,
+    ProjectPatch,
+    ProviderIn,
+    ProviderUpdate,
+    SecretIn,
+    SteerIn,
+)
 from openrd.settings import settings
-from openrd import __version__
 
 app = FastAPI(title="OpenRD", version=__version__)
 app.add_middleware(
@@ -42,7 +51,6 @@ def hw():
 
 @app.get("/api/plugins")
 def plugins():
-    store = get_store()
     return [
         {
             "id": m.id,
@@ -130,8 +138,9 @@ def create_project(body: ProjectIn):
         {
             "name": body.name,
             "goal": body.goal,
+            "prompt": body.prompt or body.description or "",
             "description": body.description,
-            "kpi": body.kpi,
+            "kpi": body.kpi or {"primary": "primary", "higher_is_better": True},
             "provider_id": body.provider_id,
             "think_slots": think,
             "exec_slots": exec_slots,
@@ -152,6 +161,26 @@ def create_project(body: ProjectIn):
         (real_ws / "artifacts" / "user_ideas.md").write_text(body.user_ideas, encoding="utf-8")
     store.append_event(row["id"], "project.created", {"name": body.name})
     return store.get_project(row["id"])
+
+
+@app.patch("/api/projects/{project_id}")
+def patch_project(project_id: str, body: ProjectPatch):
+    store = get_store()
+    if not store.get_project(project_id):
+        raise HTTPException(404, "project not found")
+    fields: dict = {}
+    if body.name is not None:
+        fields["name"] = body.name
+    if body.goal is not None:
+        fields["goal"] = body.goal
+        store.patch_memory(project_id, "goal", body.goal)
+    if body.prompt is not None:
+        fields["prompt"] = body.prompt
+        store.patch_memory(project_id, "prompt", body.prompt)
+    if body.kpi is not None:
+        fields["kpi"] = body.kpi
+        store.patch_memory(project_id, "kpi", str(body.kpi))
+    return store.update_project(project_id, **fields)
 
 
 @app.get("/api/projects/{project_id}")
@@ -268,39 +297,128 @@ def project_artifacts(project_id: str):
 
 
 @app.post("/api/projects/{project_id}/artifacts")
-async def upload_artifact(project_id: str, file: UploadFile = File(...)):
+async def upload_artifact(
+    project_id: str,
+    file: UploadFile = File(...),
+    role: str = Form("extra"),
+    prompt: str = Form(""),
+):
     store = get_store()
     project = store.get_project(project_id)
     if not project:
         raise HTTPException(404, "project not found")
-    dest_dir = Path(project["workspace_path"]) / "artifacts"
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / (file.filename or "upload.bin")
-    dest.write_bytes(await file.read())
-    rec = store.add_artifact(
-        {
-            "project_id": project_id,
-            "filename": dest.name,
-            "path": str(dest),
-            "mime": file.content_type,
-            "status": "stored",
-        }
-    )
+    data = await file.read()
     rt = get_runtime(project_id)
+    ingest = None
+    archive = None
     try:
         if not rt.ctx.has("ingest"):
             rt.load_plugins()
-        parsed = rt.ctx.require("ingest").ingest_path(dest)
-        archive = rt.ctx.require("archive")
-        for i, chunk in enumerate(parsed.get("chunks") or []):
-            archive.add("paper", f"{dest.name}#{i}", chunk, url=str(dest))
-        store.update_artifact(rec["id"], status="ingested")
-        if rt.ctx.has("human"):
-            rt.ctx.require("human").push("artifact", dest.name, {"path": str(dest)})
-        rec["parsed"] = {"chunks": len(parsed.get("chunks") or []), "claims": parsed.get("claims")}
-    except Exception as e:
-        rec["error"] = str(e)
+        ingest = rt.ctx.get("ingest")
+        archive = rt.ctx.get("archive")
+        if archive and not getattr(archive, "project_id", None):
+            archive.bind(project_id, rt.ctx.get("embed"))
+    except Exception:
+        ingest = None
+        archive = None
+    rec = ingest_upload(
+        store,
+        project_id=project_id,
+        workspace=Path(project["workspace_path"]),
+        filename=file.filename or "upload.bin",
+        data=data,
+        mime=file.content_type,
+        role=role,
+        prompt=prompt,
+        ingest_svc=ingest,
+        archive=archive,
+    )
+    if rt.ctx.has("human"):
+        rt.ctx.require("human").push(
+            "artifact", rec["filename"], {"path": rec["path"], "role": role}
+        )
     return rec
+
+
+@app.get("/api/projects/{project_id}/jobs")
+def project_jobs(project_id: str):
+    return get_store().list_jobs(project_id)
+
+
+@app.get("/api/projects/{project_id}/asks")
+def project_asks(project_id: str):
+    return get_store().list_asks(project_id)
+
+
+@app.post("/api/projects/{project_id}/asks")
+def create_ask(project_id: str, body: AskIn):
+    store = get_store()
+    if not store.get_project(project_id):
+        raise HTTPException(404, "project not found")
+    rec = store.add_ask(
+        {
+            "project_id": project_id,
+            "kind": body.kind,
+            "question": body.question,
+            "secret_name": body.secret_name,
+            "blocked_job_ids": body.blocked_job_ids,
+        }
+    )
+    for jid in body.blocked_job_ids:
+        store.update_job(jid, blocked_by=rec["id"], status="blocked")
+    store.append_event(project_id, "human.question", {"id": rec["id"], "kind": body.kind})
+    return rec
+
+
+@app.post("/api/projects/{project_id}/asks/{ask_id}/reply")
+def reply_ask(project_id: str, ask_id: str, body: AskReply):
+    store = get_store()
+    ask = store.get_ask(ask_id)
+    if not ask or ask.get("project_id") != project_id:
+        raise HTTPException(404, "ask not found")
+    if body.decline:
+        rec = store.decline_ask(ask_id)
+        store.append_event(project_id, "human.ask.answered", {"id": ask_id, "declined": True})
+        store.add_human_message(project_id, "user", f"declined ask {ask_id}")
+        return rec
+    if ask.get("kind") == "secret" and body.secret_value:
+        name = ask.get("secret_name") or "unnamed"
+        store.set_project_secret(
+            project_id, name, body.secret_value, note=ask.get("question") or ""
+        )
+        rec = store.answer_ask(ask_id, f"saved secret {name}")
+        store.add_human_message(project_id, "user", f"saved secret {name}")
+    else:
+        rec = store.answer_ask(ask_id, body.answer)
+        store.add_human_message(project_id, "user", body.answer[:500])
+    store.append_event(project_id, "human.ask.answered", {"id": ask_id, "declined": False})
+    return rec
+
+
+@app.get("/api/projects/{project_id}/secrets")
+def list_secrets(project_id: str):
+    return get_store().list_project_secrets(project_id)
+
+
+@app.post("/api/projects/{project_id}/secrets")
+def put_secret(project_id: str, body: SecretIn):
+    if not get_store().get_project(project_id):
+        raise HTTPException(404, "project not found")
+    rec = get_store().set_project_secret(project_id, body.name, body.value, body.note)
+    get_store().add_human_message(project_id, "user", f"saved secret {body.name}")
+    return rec
+
+
+@app.patch("/api/projects/{project_id}/secrets/{name}")
+def patch_secret(project_id: str, name: str, body: SecretIn):
+    rec = get_store().set_project_secret(project_id, name, body.value, body.note)
+    return rec
+
+
+@app.delete("/api/projects/{project_id}/secrets/{name}")
+def delete_secret(project_id: str, name: str):
+    get_store().delete_project_secret(project_id, name)
+    return {"ok": True}
 
 
 @app.get("/api/projects/{project_id}/plugins")

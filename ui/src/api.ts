@@ -27,6 +27,7 @@ export type Project = {
   id: string;
   name: string;
   goal: string;
+  prompt?: string;
   status: string;
   think_slots: number;
   exec_slots: number;
@@ -49,6 +50,41 @@ export type TreeNode = {
   created_at: string;
 };
 
+export type Artifact = {
+  id: string;
+  filename: string;
+  path: string;
+  mime?: string;
+  role: string;
+  prompt?: string;
+  status: string;
+};
+
+export type Ask = {
+  id: string;
+  kind: string;
+  question: string;
+  status: string;
+  answer?: string;
+  secret_name?: string | null;
+  blocked_job_ids?: string[];
+};
+
+export type Job = {
+  id: string;
+  kind: string;
+  title: string;
+  status: string;
+  blocked_by?: string | null;
+  metric?: string;
+};
+
+export type SecretMeta = {
+  name: string;
+  note: string;
+  has_value: boolean;
+};
+
 export type PluginInfo = {
   id: string;
   title: string;
@@ -57,3 +93,18 @@ export type PluginInfo = {
   when_to_use: string;
   enabled?: boolean;
 };
+
+export async function uploadArtifact(
+  projectId: string,
+  file: File,
+  role: string,
+  prompt = "",
+): Promise<Artifact> {
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("role", role);
+  fd.append("prompt", prompt);
+  const res = await fetch(`/api/projects/${projectId}/artifacts`, { method: "POST", body: fd });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}

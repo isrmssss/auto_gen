@@ -45,6 +45,9 @@ def project_workspace(project_id: str) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     (path / "work").mkdir(exist_ok=True)
     (path / "artifacts").mkdir(exist_ok=True)
+    (path / "inputs").mkdir(exist_ok=True)
+    (path / "outputs").mkdir(exist_ok=True)
+    (path / "extras").mkdir(exist_ok=True)
     (path / "runs").mkdir(exist_ok=True)
     (path / "knowledge").mkdir(exist_ok=True)
     return path

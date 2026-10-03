@@ -32,6 +32,10 @@ BLACKBOARD_RELEASE = "blackboard.release"
 
 HUMAN_STEER = "human.steer"
 HUMAN_QUESTION = "human.question"
+HUMAN_ASK_ANSWERED = "human.ask.answered"
+JOB_READY = "job.ready"
+JOB_BLOCKED = "job.blocked"
+FUNNEL_STEP = "funnel.step"
 ROLLBACK = "project.rollback"
 
 COST = "llm.cost"

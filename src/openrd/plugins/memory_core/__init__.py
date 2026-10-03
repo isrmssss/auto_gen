@@ -6,7 +6,7 @@ from openrd.settings import settings
 from openrd.util.text import clip_tokens
 
 
-CORE_KEYS = ("goal", "champion", "open_questions", "bans", "budget", "kpi")
+CORE_KEYS = ("goal", "prompt", "champion", "open_questions", "bans", "budget", "kpi")
 
 
 class CoreMemory:

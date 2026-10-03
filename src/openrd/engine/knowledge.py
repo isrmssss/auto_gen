@@ -18,6 +18,7 @@ def export_knowledge(store: Store, project_id: str, dest: Path) -> None:
     (dest / "CONTEXT.md").write_text(
         "# CONTEXT\n\n"
         f"## Goal\n\n{mem.get('goal') or project.get('goal') or ''}\n\n"
+        f"## Prompt\n\n{mem.get('prompt') or project.get('prompt') or ''}\n\n"
         f"## Champion\n\n{mem.get('champion') or '(none)'}\n\n"
         f"## Open questions\n\n{mem.get('open_questions') or ''}\n\n"
         f"## Bans\n\n{mem.get('bans') or ''}\n\n"

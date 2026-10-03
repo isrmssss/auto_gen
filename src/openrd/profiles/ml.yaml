@@ -27,5 +27,6 @@ bundles:
   - rnd.search_policy
   - rnd.coder
   - rnd.analyst
+  - rnd.funnel
   - rnd.orchestrator
   - domain.ml_competition

@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   goal TEXT NOT NULL,
+  prompt TEXT NOT NULL DEFAULT '',
   description TEXT NOT NULL DEFAULT '',
   kpi_json TEXT NOT NULL DEFAULT '{}',
   profile TEXT NOT NULL DEFAULT 'default',
@@ -205,9 +206,40 @@ CREATE TABLE IF NOT EXISTS artifacts (
   filename TEXT NOT NULL,
   path TEXT NOT NULL,
   mime TEXT,
+  role TEXT NOT NULL DEFAULT 'extra',
+  prompt TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'pending',
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS jobs (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'open',
+  blocked_by TEXT,
+  metric TEXT NOT NULL DEFAULT '',
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_project ON jobs(project_id, status);
+
+CREATE TABLE IF NOT EXISTS asks (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  question TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open',
+  answer TEXT NOT NULL DEFAULT '',
+  secret_name TEXT,
+  blocked_job_ids TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_asks_project ON asks(project_id, status);
 
 CREATE TABLE IF NOT EXISTS plugins_enabled (
   project_id TEXT NOT NULL,

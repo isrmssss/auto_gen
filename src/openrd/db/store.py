@@ -45,7 +45,16 @@ class Store:
     def _migrate(self) -> None:
         with self._lock:
             self._conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+            self._ensure_column("projects", "prompt", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column("artifacts", "role", "TEXT NOT NULL DEFAULT 'extra'")
+            self._ensure_column("artifacts", "prompt", "TEXT NOT NULL DEFAULT ''")
             self._conn.commit()
+
+    def _ensure_column(self, table: str, column: str, decl: str) -> None:
+        rows = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+        names = {r[1] for r in rows}
+        if column not in names:
+            self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     def close(self) -> None:
         with self._lock:
@@ -71,7 +80,10 @@ class Store:
         p = secrets_path()
         if not p.exists():
             return {"providers": {}}
-        return json.loads(p.read_text(encoding="utf-8"))
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return {"providers": {}, "projects": {}}
 
     def _write_secrets(self, data: dict[str, Any]) -> None:
         p = secrets_path()
@@ -88,6 +100,57 @@ class Store:
 
     def get_provider_key(self, provider_id: str) -> str | None:
         return self._secrets().get("providers", {}).get(provider_id)
+
+    def list_project_secrets(self, project_id: str) -> list[dict[str, Any]]:
+        items = (self._secrets().get("projects") or {}).get(project_id) or {}
+        out = []
+        for name, rec in items.items():
+            if isinstance(rec, str):
+                rec = {"value": rec, "note": ""}
+            out.append(
+                {
+                    "name": name,
+                    "note": rec.get("note") or "",
+                    "has_value": bool(rec.get("value")),
+                }
+            )
+        return out
+
+    def set_project_secret(
+        self, project_id: str, name: str, value: str, note: str = ""
+    ) -> dict[str, Any]:
+        data = self._secrets()
+        bucket = data.setdefault("projects", {}).setdefault(project_id, {})
+        prev = bucket.get(name) or {}
+        if isinstance(prev, str):
+            prev = {"value": prev, "note": ""}
+        stored = value if value else (prev.get("value") or "")
+        stored_note = note or prev.get("note") or ""
+        bucket[name] = {"value": stored, "note": stored_note}
+        self._write_secrets(data)
+        return {"name": name, "note": stored_note, "has_value": bool(stored)}
+
+    def delete_project_secret(self, project_id: str, name: str) -> None:
+        data = self._secrets()
+        (data.get("projects") or {}).get(project_id, {}).pop(name, None)
+        self._write_secrets(data)
+
+    def project_secret_values(self, project_id: str) -> dict[str, str]:
+        items = (self._secrets().get("projects") or {}).get(project_id) or {}
+        out: dict[str, str] = {}
+        for name, rec in items.items():
+            val = rec if isinstance(rec, str) else rec.get("value") or ""
+            if val:
+                out[name] = val
+        return out
+
+    def redact_secrets(self, project_id: str, text: str) -> str:
+        if not text:
+            return text
+        for name, value in self.project_secret_values(project_id).items():
+            if value:
+                text = text.replace(value, f"[secret:{name}]")
+        return text
 
     # --- providers ---
     def create_provider(
@@ -174,13 +237,14 @@ class Store:
         now = _now()
         self.execute(
             """INSERT INTO projects(
-                id, name, goal, description, kpi_json, profile, think_slots, exec_slots,
+                id, name, goal, prompt, description, kpi_json, profile, think_slots, exec_slots,
                 status, workspace_path, provider_id, rigor, created_at, updated_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 pid,
                 data["name"],
                 data["goal"],
+                data.get("prompt") or "",
                 data.get("description") or "",
                 _json(data.get("kpi") or {}),
                 data.get("profile") or "default",
@@ -200,6 +264,7 @@ class Store:
     def init_memory_blocks(self, project_id: str, data: dict[str, Any]) -> None:
         defaults = {
             "goal": data.get("goal") or "",
+            "prompt": data.get("prompt") or "",
             "champion": "(none yet)",
             "open_questions": "",
             "bans": "",
@@ -228,6 +293,7 @@ class Store:
         allowed = {
             "name",
             "goal",
+            "prompt",
             "description",
             "status",
             "champion_node_id",
@@ -767,14 +833,16 @@ class Store:
     def add_artifact(self, art: dict[str, Any]) -> dict[str, Any]:
         aid = art.get("id") or _uid()
         self.execute(
-            """INSERT INTO artifacts(id, project_id, filename, path, mime, status, created_at)
-               VALUES (?,?,?,?,?,?,?)""",
+            """INSERT INTO artifacts(id, project_id, filename, path, mime, role, prompt, status, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
             (
                 aid,
                 art["project_id"],
                 art["filename"],
                 art["path"],
                 art.get("mime"),
+                art.get("role") or "extra",
+                art.get("prompt") or "",
                 art.get("status") or "pending",
                 _now(),
             ),
@@ -795,6 +863,147 @@ class Store:
             params.append(v)
         params.append(artifact_id)
         self.execute(f"UPDATE artifacts SET {', '.join(sets)} WHERE id=?", tuple(params))
+
+    # --- jobs ---
+    def add_job(self, job: dict[str, Any]) -> dict[str, Any]:
+        jid = job.get("id") or _uid()
+        self.execute(
+            """INSERT INTO jobs(
+                id, project_id, kind, title, status, blocked_by, metric, payload_json, created_at
+            ) VALUES (?,?,?,?,?,?,?,?,?)""",
+            (
+                jid,
+                job["project_id"],
+                job["kind"],
+                job.get("title") or job["kind"],
+                job.get("status") or "open",
+                job.get("blocked_by"),
+                job.get("metric") or "",
+                _json(job.get("payload") or {}),
+                _now(),
+            ),
+        )
+        return self.get_job(jid)  # type: ignore
+
+    def get_job(self, job_id: str) -> dict[str, Any] | None:
+        row = self.query_one("SELECT * FROM jobs WHERE id=?", (job_id,))
+        return self._hydrate_job(row) if row else None
+
+    def list_jobs(self, project_id: str) -> list[dict[str, Any]]:
+        rows = self.query(
+            "SELECT * FROM jobs WHERE project_id=? ORDER BY created_at",
+            (project_id,),
+        )
+        return [self._hydrate_job(r) for r in rows]
+
+    def update_job(self, job_id: str, **fields: Any) -> dict[str, Any] | None:
+        sets = []
+        params: list[Any] = []
+        for k, v in fields.items():
+            if k == "payload":
+                sets.append("payload_json=?")
+                params.append(_json(v))
+            else:
+                sets.append(f"{k}=?")
+                params.append(v)
+        if sets:
+            params.append(job_id)
+            self.execute(f"UPDATE jobs SET {', '.join(sets)} WHERE id=?", tuple(params))
+        return self.get_job(job_id)
+
+    def _hydrate_job(self, row: dict[str, Any] | None) -> dict[str, Any]:
+        if not row:
+            return {}
+        item = dict(row)
+        item["payload"] = _parse(row.get("payload_json"), {})
+        return item
+
+    def list_runnable_jobs(self, project_id: str) -> list[dict[str, Any]]:
+        open_asks = {a["id"] for a in self.list_asks(project_id) if a.get("status") == "open"}
+        out = []
+        for job in self.list_jobs(project_id):
+            if job.get("status") not in {"open", "ready"}:
+                continue
+            blocked = job.get("blocked_by")
+            if blocked and blocked in open_asks:
+                continue
+            out.append(job)
+        return out
+
+    # --- asks ---
+    def add_ask(self, ask: dict[str, Any]) -> dict[str, Any]:
+        aid = ask.get("id") or _uid()
+        now = _now()
+        self.execute(
+            """INSERT INTO asks(
+                id, project_id, kind, question, status, answer, secret_name,
+                blocked_job_ids, created_at, updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (
+                aid,
+                ask["project_id"],
+                ask.get("kind") or "clarify",
+                ask["question"],
+                ask.get("status") or "open",
+                ask.get("answer") or "",
+                ask.get("secret_name"),
+                _json(ask.get("blocked_job_ids") or []),
+                now,
+                now,
+            ),
+        )
+        return self.get_ask(aid)  # type: ignore
+
+    def get_ask(self, ask_id: str) -> dict[str, Any] | None:
+        row = self.query_one("SELECT * FROM asks WHERE id=?", (ask_id,))
+        return self._hydrate_ask(row) if row else None
+
+    def list_asks(self, project_id: str, status: str | None = None) -> list[dict[str, Any]]:
+        if status:
+            rows = self.query(
+                "SELECT * FROM asks WHERE project_id=? AND status=? ORDER BY created_at",
+                (project_id, status),
+            )
+        else:
+            rows = self.query(
+                "SELECT * FROM asks WHERE project_id=? ORDER BY created_at",
+                (project_id,),
+            )
+        return [self._hydrate_ask(r) for r in rows]
+
+    def _hydrate_ask(self, row: dict[str, Any] | None) -> dict[str, Any]:
+        if not row:
+            return {}
+        item = dict(row)
+        item["blocked_job_ids"] = _parse(row.get("blocked_job_ids"), [])
+        return item
+
+    def answer_ask(self, ask_id: str, answer: str) -> dict[str, Any] | None:
+        ask = self.get_ask(ask_id)
+        if not ask:
+            return None
+        self.execute(
+            "UPDATE asks SET status=?, answer=?, updated_at=? WHERE id=?",
+            ("answered", answer, _now(), ask_id),
+        )
+        for job in self.list_jobs(ask["project_id"]):
+            if job.get("blocked_by") == ask_id and job.get("status") in {"open", "blocked"}:
+                self.update_job(job["id"], status="open")
+        return self.get_ask(ask_id)
+
+    def decline_ask(self, ask_id: str) -> dict[str, Any] | None:
+        ask = self.get_ask(ask_id)
+        if not ask:
+            return None
+        self.execute(
+            "UPDATE asks SET status=?, updated_at=? WHERE id=?",
+            ("declined", _now(), ask_id),
+        )
+        ids = set(ask.get("blocked_job_ids") or [])
+        for job in self.list_jobs(ask["project_id"]):
+            if job["id"] in ids or job.get("blocked_by") == ask_id:
+                self.update_job(job["id"], status="cancelled")
+        return self.get_ask(ask_id)
 
     # --- human chat ---
     def add_human_message(self, project_id: str, role: str, content: str) -> dict[str, Any]:

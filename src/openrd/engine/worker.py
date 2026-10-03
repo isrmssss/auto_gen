@@ -124,9 +124,13 @@ class ProjectRuntime:
             self.ctx.require("search_planner").bind(self.ctx)
         if self.ctx.has("artifacts"):
             self.ctx.require("artifacts").bind(self.ctx, self.project_id)
+        if self.ctx.has("funnel"):
+            self.ctx.require("funnel").bind(self.ctx, self.project_id)
 
     async def emit(self, typ: str, payload: dict[str, Any] | None = None, node_id: str | None = None, agent: str = "orchestrator") -> dict[str, Any]:
-        return await self.ctx.require("journal").write(typ, payload, agent_id=agent, node_id=node_id)
+        if self.ctx.has("journal"):
+            return await self.ctx.require("journal").write(typ, payload, agent_id=agent, node_id=node_id)
+        return self.store.append_event(self.project_id, typ, payload or {}, agent_id=agent, node_id=node_id)
 
     def tree(self, **kwargs: Any) -> dict[str, Any]:
         node = self.store.add_tree_node({"project_id": self.project_id, **kwargs})
@@ -149,6 +153,14 @@ class ProjectRuntime:
                     self.ctx.require("graph").edge(gid, gid, "self")
         self.store.update_project(self.project_id, status="running")
         await self.emit("project.started", {"cycle": self.cycle})
+        if not p.get("provider_id"):
+            await self.emit(
+                "provider.missing",
+                {
+                    "reason": "no_provider",
+                    "detail": "No model provider. Funnel runs; LLM steps skipped.",
+                },
+            )
         self.task = asyncio.create_task(self._loop(), name=f"openrd-{self.project_id}")
 
     async def stop(self) -> None:
@@ -206,6 +218,7 @@ class ProjectRuntime:
                     if human.stop:
                         return
                 await self._consume_human()
+                await self._advance_jobs()
                 self.cycle += 1
                 for phase in PHASES:
                     self.current_phase = phase
@@ -217,7 +230,12 @@ class ProjectRuntime:
                     human = self.ctx.get("human")
                     if human and human.stop:
                         return
-                export_knowledge(self.store, self.project_id, Path(self._project()["workspace_path"]) / "knowledge")
+                export_knowledge(
+                    self.store,
+                    self.project_id,
+                    Path(self._project()["workspace_path"]) / "knowledge",
+                )
+                await asyncio.sleep(0.6)
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -243,15 +261,58 @@ class ProjectRuntime:
             if kind == "artifact":
                 await self.emit(PAPER_INGESTED, msg)
 
+    async def _advance_jobs(self) -> None:
+        for job in self.store.list_runnable_jobs(self.project_id):
+            await self.emit("job.ready", {"id": job["id"], "kind": job["kind"]})
+            if job.get("kind") == "denoise" and job.get("status") == "open":
+                self.store.update_job(job["id"], status="running")
+                fp = fingerprint_text("denoise", job.get("title") or "")
+                if not self.store.has_hypothesis_fingerprint(self.project_id, fp):
+                    self.store.add_hypothesis(
+                        {
+                            "project_id": self.project_id,
+                            "line_id": "denoise",
+                            "type": "explore",
+                            "mechanism": "noise reduction with a noise_level metric",
+                            "fingerprint": fp,
+                            "text": "Estimate noise_level and try denoise treatments independently of blocked work.",
+                            "status": "queued",
+                        }
+                    )
+                self.store.update_job(job["id"], status="done")
+
     async def phase_understand(self) -> None:
         p = self._project()
-        await self.emit(THOUGHT, {"text": f"Goal: {p['goal'][:500]}"})
+        funnel = self.ctx.get("funnel")
+        formal = None
+        if funnel:
+            formal = funnel.formalize(p)
+            funnel.maybe_noise_job(p)
+            await self.emit("funnel.step", {"level": 0, **formal})
+        await self.emit(
+            THOUGHT,
+            {"text": f"Goal: {(p.get('goal') or '')[:400]} Prompt: {(p.get('prompt') or '')[:400]}"},
+        )
         if self.ctx.has("compiler"):
-            brief = self.ctx.require("compiler").brief("understand", p["goal"])
+            extra = p.get("prompt") or p["goal"]
+            brief = self.ctx.require("compiler").brief("understand", extra)
             await self.emit(THOUGHT, {"text": brief[:1500], "kind": "brief"})
 
     async def phase_research(self) -> None:
         p = self._project()
+        funnel = self.ctx.get("funnel")
+        if funnel and funnel.is_short_path(p):
+            await self.emit(
+                "funnel.step",
+                {"level": 0, "skip_math": True, "reason": "decode/direct ingest"},
+            )
+            return
+        if not p.get("provider_id"):
+            await self.emit(
+                "funnel.step",
+                {"level": 6, "skip_search": True, "reason": "no_provider"},
+            )
+            return
         planner = self.ctx.get("search_planner")
         ranker = self.ctx.get("search_ranker")
         archive = self.ctx.get("archive")
@@ -421,9 +482,43 @@ class ProjectRuntime:
         path.write_text(fenced, encoding="utf-8")
 
     async def phase_ideate(self) -> None:
+        p = self._project()
+        funnel = self.ctx.get("funnel")
+        if funnel:
+            domains = [] if funnel.is_short_path(p) else funnel.score_domains(p)
+            seeded = funnel.seed_hypotheses(p, domains)
+            have_analogy = any(
+                n.get("title") == "cross-science analogies"
+                for n in self.store.list_tree(self.project_id)
+            )
+            if self.cycle % 3 == 1 and not funnel.is_short_path(p) and not have_analogy:
+                self.store.add_tree_node(
+                    {
+                        "project_id": self.project_id,
+                        "kind": "domain",
+                        "title": "cross-science analogies",
+                        "status": "open",
+                        "summary": "physics chemistry biology economics ecology robotics",
+                    }
+                )
+            await self.emit(
+                "funnel.step",
+                {
+                    "level": 8,
+                    "skip_math": funnel.is_short_path(p),
+                    "seeded": len(seeded),
+                    "domains": [d.get("id") for d in domains],
+                },
+            )
         scientist = self.ctx.get("scientist")
         policy = self.ctx.get("search_policy")
-        if not scientist:
+        if not scientist or not p.get("provider_id"):
+            queued = [
+                h
+                for h in self.store.list_hypotheses(self.project_id)
+                if h.get("status") == "queued"
+            ]
+            self.current_hyps = queued[-3:]
             return
         raw = await scientist.propose(f"cycle={self.cycle}")
         if policy:

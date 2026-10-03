@@ -88,7 +88,7 @@ class Compiler:
         compiled = "\n\n".join(
             [core, clip_tokens(body, settings.prompt_brief_token_budget), tools]
         )
-        return compiled
+        return self.store.redact_secrets(self.project_id, compiled)
 
 
 class Plugin:

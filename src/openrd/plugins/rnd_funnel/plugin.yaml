@@ -1,0 +1,11 @@
+id: rnd.funnel
+title: Idea funnel
+bundle: rnd
+provides: [funnel]
+requires: [memory_core]
+module: openrd.plugins.rnd_funnel
+class: Plugin
+when_to_use: >
+  Formalize the task, score hidden structures and math domains, then emit a
+  small method tree. Skip the math comb for transcription/decode tasks.
+description: Deterministic research funnel with quotas. Combinations are local; LLM sees only the top.

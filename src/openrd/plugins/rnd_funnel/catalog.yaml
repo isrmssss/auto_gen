@@ -1,0 +1,118 @@
+objects:
+  - text
+  - images
+  - graphs
+  - time_series
+  - sequences
+  - object_set
+  - multimodal
+  - physical
+  - agents
+  - memory
+  - trajectories
+
+tasks:
+  - classification
+  - regression
+  - generation
+  - clustering
+  - anomaly
+  - ranking
+  - search
+  - forecasting
+  - segmentation
+  - control
+  - transcription
+
+structures:
+  - id: graphs
+    ask: connections
+  - id: manifolds
+    ask: geometry
+  - id: dynamics
+    ask: time
+  - id: clusters
+    ask: heterogeneity
+  - id: pde
+    ask: local interactions
+  - id: information
+    ask: memory
+  - id: evolution
+    ask: evolution
+  - id: transport
+    ask: distributions
+  - id: causal
+    ask: causality
+  - id: hierarchy
+    ask: hierarchy
+  - id: groups
+    ask: symmetries
+  - id: statphys
+    ask: energy
+  - id: games
+    ask: many agents
+  - id: bayes
+    ask: uncertainty
+
+domains:
+  - id: linear_algebra
+    methods: [PCA, SVD, tensor_decomposition, spectral_decomposition]
+  - id: optimization
+    methods: [convex, proximal, ADMM, mirror_descent]
+  - id: probability
+    methods: [stochastic_processes, markov, monte_carlo, importance_sampling]
+  - id: statistics
+    methods: [robust, extreme_value, hypothesis_testing]
+  - id: information_theory
+    methods: [entropy, mutual_information, information_bottleneck, MDL]
+  - id: graph_theory
+    methods: [centrality, community, graph_kernels, random_walks]
+  - id: spectral
+    methods: [laplacian, spectral_clustering, eigenvalues]
+  - id: topology
+    methods: [persistent_homology, mapper, simplicial]
+  - id: differential_geometry
+    methods: [manifolds, geodesics, curvature]
+  - id: optimal_transport
+    methods: [wasserstein, sinkhorn, barycenters]
+  - id: group_theory
+    methods: [equivariance, invariance, lie_groups]
+  - id: category_theory
+    methods: [functors, monads, compositionality]
+  - id: dynamical_systems
+    methods: [attractors, chaos, lyapunov]
+  - id: pde
+    methods: [diffusion, heat, reaction_diffusion]
+  - id: statistical_physics
+    methods: [ising, free_energy, phase_transition]
+  - id: game_theory
+    methods: [nash, stackelberg, mechanism_design]
+  - id: control
+    methods: [MPC, PID, optimal_control]
+  - id: bayesian
+    methods: [variational_inference, MCMC]
+  - id: chaos
+    methods: [fractals, strange_attractors]
+  - id: combinatorics
+    methods: [matching, set_cover]
+  - id: stochastic
+    methods: [brownian, diffusion_models]
+
+sciences:
+  - physics
+  - chemistry
+  - biology
+  - economics
+  - ecology
+  - robotics
+  - neuroscience
+  - control
+  - networks
+  - quantum
+
+noise_terms:
+  - noisy
+  - noise
+  - шум
+  - corrupted
+  - outlier

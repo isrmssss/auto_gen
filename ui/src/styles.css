@@ -105,9 +105,75 @@ h2 { font-size: 1.05rem; margin: 1.4rem 0 0.6rem; font-weight: 600; }
 .pill.bad { color: var(--bad); }
 .pill.run { color: var(--accent); }
 .form { display: grid; gap: 0.7rem; max-width: 720px; }
+.form-wide { max-width: 960px; }
+.hint { font-size: 0.75rem; color: var(--muted); font-weight: 400; }
 label { display: grid; gap: 0.3rem; font-size: 0.85rem; color: var(--muted); }
 table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
 th, td { text-align: left; padding: 0.4rem 0.35rem; border-bottom: 1px solid var(--line); }
+.file-cols {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+.drop {
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  padding: 0.7rem;
+  background: var(--bg-3);
+  min-height: 8rem;
+}
+.board {
+  display: flex;
+  gap: 0.6rem;
+  overflow-x: auto;
+  padding-bottom: 0.4rem;
+  min-height: 260px;
+}
+.board-col {
+  flex: 0 0 200px;
+  width: 200px;
+  max-height: 420px;
+  overflow-y: auto;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.5rem;
+}
+.board-col-title {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 0.4rem;
+}
+.board-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin: 0 0 0.4rem;
+  border: 1px solid var(--line);
+  background: var(--bg-3);
+  border-radius: 8px;
+  padding: 0.45rem 0.5rem;
+  cursor: pointer;
+}
+.board-card.selected { border-color: var(--accent); }
+.project-grid { display: grid; gap: 0.8rem; }
+.split-brief {
+  display: grid;
+  grid-template-columns: 1.2fr 1.2fr 0.8fr;
+  gap: 0.8rem;
+}
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: grid;
+  place-items: center;
+  z-index: 20;
+  padding: 1rem;
+}
+.modal .card { max-width: 420px; width: 100%; }
 .tree {
   display: flex;
   flex-direction: column;
@@ -120,7 +186,6 @@ th, td { text-align: left; padding: 0.4rem 0.35rem; border-bottom: 1px solid var
   background: var(--bg-3);
   border-radius: 8px;
   padding: 0.45rem 0.55rem;
-  margin-left: calc(var(--d, 0) * 18px);
   cursor: pointer;
 }
 .node.selected { border-color: var(--accent); }
@@ -142,7 +207,9 @@ th, td { text-align: left; padding: 0.4rem 0.35rem; border-bottom: 1px solid var
 }
 @media (max-width: 980px) {
   .shell { grid-template-columns: 1fr; }
-  .side { flex-direction: row; align-items: center; }
-  .nav { flex-direction: row; }
-  .split { grid-template-columns: 1fr; }
+  .side { flex-direction: row; flex-wrap: wrap; align-items: center; }
+  .nav { flex-direction: row; flex-wrap: wrap; }
+  .side .muted { flex: 1 1 100%; margin-top: 0; }
+  .split, .split-brief, .file-cols { grid-template-columns: 1fr; }
+  .board-col { flex: 0 0 180px; width: 180px; }
 }

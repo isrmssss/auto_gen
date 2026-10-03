@@ -99,6 +99,14 @@ class LLMService:
         payload_messages = list(messages)
         if system:
             payload_messages = [{"role": "system", "content": system}, *payload_messages]
+        if self.project_id:
+            payload_messages = [
+                {
+                    **m,
+                    "content": self.store.redact_secrets(self.project_id, m.get("content") or ""),
+                }
+                for m in payload_messages
+            ]
         body: dict[str, Any] = {
             "model": model,
             "messages": payload_messages,
