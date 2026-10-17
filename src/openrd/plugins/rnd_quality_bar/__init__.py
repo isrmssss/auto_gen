@@ -11,6 +11,25 @@ NAIVE = re.compile(
     r"xgboost default|random forest|lstm|fine-tune bert)\s*$",
     re.I,
 )
+_EMPTY_CHAMPION = {"", "(none yet)", "(none)", "none", "null"}
+
+
+def champion_is_set(champion: str) -> bool:
+    return (champion or "").strip().lower() not in _EMPTY_CHAMPION
+
+
+def expand_writeup(mechanism: str, text: str, metric: str = "primary") -> str:
+    """One expansion so a short note states mechanism, trigger, freeze, and KPI effect."""
+    body = (text or "").strip()
+    if len(body.split()) >= 25:
+        return body
+    addition = (
+        f"Mechanism: {mechanism or 'the stated idea'}. "
+        "Trigger: the data card or the user note shows this lever is available. "
+        "Frozen: components that are not part of this mechanism stay unchanged. "
+        f"Expected KPI effect: move {metric or 'primary'} in the goal direction on a screen split."
+    )
+    return f"{body} {addition}".strip()
 
 
 class QualityBar:
@@ -22,19 +41,41 @@ class QualityBar:
         self.ctx = ctx
         self.rigor = rigor
 
-    def cheap_check(self, mechanism: str, text: str) -> dict[str, Any]:
+    def cheap_check(
+        self,
+        mechanism: str,
+        text: str,
+        champion: str = "",
+        has_data_card: bool = False,
+    ) -> dict[str, Any]:
         reasons = []
         blob = f"{mechanism}\n{text}"
-        if self.rigor in {"high", "extreme"} and NAIVE.search(mechanism.strip()):
-            reasons.append("mechanism is a bare baseline; require a compound (adapter, loss, data, calibration)")
-        if len(text.split()) < 25 and self.rigor != "low":
-            reasons.append("write-up too thin — need mechanism, trigger, what is frozen, expected KPI effect")
-        if "if id=" in text.lower() or "hardcode" in text.lower():
+        naive = bool(NAIVE.search(mechanism.strip()))
+        if self.rigor in {"high", "extreme"} and naive:
+            reasons.append(
+                "mechanism is a bare baseline; require a compound (adapter, loss, data, calibration)"
+            )
+        thin = len(text.split()) < 25 and self.rigor != "low"
+        first_screen = has_data_card and not champion_is_set(champion) and not naive
+        if thin and not first_screen:
+            reasons.append(
+                "write-up too thin — need mechanism, trigger, what is frozen, expected KPI effect"
+            )
+        if "if id=" in blob.lower() or "hardcode" in blob.lower():
             reasons.append("looks like an id-specific hack")
         return {"ok": not reasons, "reasons": reasons}
 
-    async def judge(self, goal: str, mechanism: str, text: str, champion: str) -> dict[str, Any]:
-        cheap = self.cheap_check(mechanism, text)
+    async def judge(
+        self,
+        goal: str,
+        mechanism: str,
+        text: str,
+        champion: str,
+        has_data_card: bool = False,
+    ) -> dict[str, Any]:
+        cheap = self.cheap_check(
+            mechanism, text, champion=champion, has_data_card=has_data_card
+        )
         if not cheap["ok"]:
             return cheap
         if not self.ctx or self.rigor == "low":

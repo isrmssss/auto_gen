@@ -23,9 +23,24 @@ def test_safety_blocks_malware_and_allows_research():
 def test_quality_bar_rejects_bare_bert():
     bar = QualityBar()
     assert not bar.cheap_check("bert", "just bert")["ok"]
+    assert not bar.cheap_check("bert", "just bert", champion="lgbm rmsle=0.2")["ok"]
     idea = (
         "Baseline is log1p LightGBM. Trigger: mid-band underprediction. "
         "Action: add a recency-decayed RFM kNN prior and keep the LGB stack frozen. "
         "Expected: RMSLE drop on mid-activity users without touching zero-class."
     )
     assert bar.cheap_check("RFM kNN prior + recency decay on LGB stack", idea)["ok"]
+    thin = bar.cheap_check(
+        "ridge on column b",
+        "Fit ridge using column a to predict b.",
+        champion="",
+        has_data_card=True,
+    )
+    assert thin["ok"]
+    blocked = bar.cheap_check(
+        "ridge on column b",
+        "Fit ridge using column a to predict b.",
+        champion="lgbm rmsle=0.2",
+        has_data_card=True,
+    )
+    assert not blocked["ok"]

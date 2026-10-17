@@ -10,6 +10,7 @@ import yaml
 
 from openrd.core.context import Context
 from openrd.db.store import get_store
+from openrd.plugins.rnd_quality_bar import champion_is_set
 from openrd.util.canon import fingerprint_text
 from openrd.util.text import tokenize
 
@@ -237,65 +238,66 @@ class Funnel:
     def seed_hypotheses(
         self, project: dict[str, Any], domains: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
+        """Persist one runnable hypothesis. Catalog pairs in `domains` stay hints, not rows."""
         assert self.project_id
+        _ = domains
+        mem = self.store.get_memory(self.project_id)
+        if champion_is_set(mem.get("champion") or ""):
+            return []
         if self.is_short_path(project):
+            mechanism = "vision transcription plus language check"
             text = (
-                "Transcribe the input image/document into correct Russian text "
-                "and verify against the goal."
+                "Mechanism: vision transcription plus a language check. "
+                "Trigger: the input is an image or document and the goal is text. "
+                "Frozen: no tabular model and no extra corpus. "
+                "Expected KPI effect: the decoded text matches the goal language and content."
             )
-            fp = fingerprint_text("transcribe", text)
-            if self.store.has_hypothesis_fingerprint(self.project_id, fp):
-                return []
-            rec = self.store.add_hypothesis(
-                {
-                    "project_id": self.project_id,
-                    "line_id": "decode",
-                    "type": "validate",
-                    "mechanism": "vision transcription plus language check",
-                    "fingerprint": fp,
-                    "text": text,
-                    "status": "queued",
-                }
-            )
-            self.store.add_tree_node(
-                {
-                    "project_id": self.project_id,
-                    "kind": "hypothesis",
-                    "title": rec["mechanism"],
-                    "status": "queued",
-                    "summary": text,
-                    "payload": rec,
-                }
-            )
-            return [rec]
-        created = []
-        for cand in self.mass_candidates(domains, limit=6):
-            fp = fingerprint_text(cand["method"], cand["structure"])
-            if self.store.has_hypothesis_fingerprint(self.project_id, fp):
-                continue
-            rec = self.store.add_hypothesis(
-                {
-                    "project_id": self.project_id,
-                    "line_id": cand["domain"],
-                    "type": "explore",
-                    "mechanism": f"{cand['method']}+{cand['structure']}",
-                    "fingerprint": fp,
-                    "text": cand["hypothesis"],
-                    "status": "queued",
-                }
-            )
-            self.store.add_tree_node(
-                {
-                    "project_id": self.project_id,
-                    "kind": "hypothesis",
-                    "title": rec["mechanism"],
-                    "status": "queued",
-                    "summary": cand["hypothesis"],
-                    "payload": rec,
-                }
-            )
-            created.append(rec)
-        return created
+            line_id = "decode"
+        else:
+            mechanism, text = self._baseline_writeup(project, mem.get("data_card") or "")
+            line_id = "baseline"
+        fp = fingerprint_text(line_id, mechanism)
+        if self.store.has_hypothesis_fingerprint(self.project_id, fp):
+            return []
+        rec = self.store.add_hypothesis(
+            {
+                "project_id": self.project_id,
+                "line_id": line_id,
+                "type": "validate",
+                "mechanism": mechanism,
+                "fingerprint": fp,
+                "text": text,
+                "status": "queued",
+            }
+        )
+        self.store.add_tree_node(
+            {
+                "project_id": self.project_id,
+                "kind": "hypothesis",
+                "title": rec["mechanism"],
+                "status": "queued",
+                "summary": text,
+                "payload": {"line_id": line_id},
+            }
+        )
+        return [rec]
+
+    def _baseline_writeup(self, project: dict[str, Any], card: str) -> tuple[str, str]:
+        kpi = project.get("kpi") or {}
+        metric = str(kpi.get("primary") or "primary")
+        target = "the target column"
+        if "target_candidate=" in card:
+            target = card.split("target_candidate=", 1)[1].split(".", 1)[0].strip() or target
+        shown = card.strip()[:400] or "no column card yet"
+        mechanism = f"baseline {metric} on {target}"
+        text = (
+            f"Mechanism: fit a simple model on the data card to predict {target}. "
+            f"Data card: {shown}. "
+            "Trigger: there is no champion yet, so screen this baseline before compound ideas. "
+            "Frozen: use only the uploaded columns, no external joins. "
+            f"Expected KPI effect: record {metric} on a screen split so the next hypothesis must beat it."
+        )
+        return mechanism, text
 
 
 class Plugin:

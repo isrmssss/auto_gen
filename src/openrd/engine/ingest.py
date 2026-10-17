@@ -2,15 +2,81 @@
 
 from __future__ import annotations
 
+import csv
+import io
 from pathlib import Path
 from typing import Any
 
 from openrd.db.store import Store
+from openrd.plugins.rnd_quality_bar import expand_writeup
 from openrd.plugins.search_common import extractive_card
 from openrd.util.canon import fingerprint_text
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".tif", ".tiff", ".bmp"}
+TABLE_EXT = {".csv", ".tsv"}
 ROLE_DIRS = {"input": "inputs", "output": "outputs", "extra": "extras"}
+_TARGET_NAMES = {"target", "label", "labels", "y", "outcome", "response"}
+
+
+def _merge_data_card(store: Store, project_id: str, block: str) -> None:
+    block = block.strip()
+    if not block:
+        return
+    prev = (store.get_memory(project_id).get("data_card") or "").strip()
+    if block in prev:
+        return
+    store.patch_memory(project_id, "data_card", f"{prev}\n{block}".strip() if prev else block)
+
+
+def _cell_kind(value: str) -> str:
+    text = value.strip()
+    if not text:
+        return "empty"
+    try:
+        int(text)
+        return "int"
+    except ValueError:
+        pass
+    try:
+        float(text)
+        return "float"
+    except ValueError:
+        return "str"
+
+
+def profile_table(name: str, data: bytes, metric: str, delimiter: str = ",") -> str:
+    sample = data.decode("utf-8", errors="replace")
+    reader = csv.reader(io.StringIO(sample), delimiter=delimiter)
+    rows = []
+    for i, row in enumerate(reader):
+        if i > 40:
+            break
+        if any(cell.strip() for cell in row):
+            rows.append(row)
+    if not rows:
+        return f"{name}: empty table. metric={metric}."
+    header = [cell.strip() or f"col{i}" for i, cell in enumerate(rows[0])]
+    body = rows[1:]
+    lines = [line for line in sample.splitlines() if line.strip()]
+    data_rows = max(0, len(lines) - 1)
+    kinds: list[str] = []
+    for idx, col in enumerate(header):
+        seen = [_cell_kind(row[idx]) for row in body[:20] if idx < len(row)]
+        seen = [k for k in seen if k != "empty"]
+        kinds.append(f"{col}:{seen[0] if seen else 'unknown'}")
+    lowered = {col.lower(): col for col in header}
+    target = next((lowered[n] for n in _TARGET_NAMES if n in lowered), header[-1])
+    return (
+        f"{name}: rows={data_rows} columns={','.join(header)}. "
+        f"types={','.join(kinds)}. target_candidate={target}. metric={metric}."
+    )
+
+
+def profile_image(name: str, suffix: str) -> str:
+    return (
+        f"{name}: image {suffix or 'unknown'}. "
+        "Needs the provider vision role. Binary is not sent to the model."
+    )
 
 
 def role_dir(workspace: Path, role: str) -> Path:
@@ -76,15 +142,23 @@ def ingest_upload(
         "chunks": len(parsed.get("chunks") or []),
         "claims": parsed.get("claims") or [],
     }
+    metric = str((project.get("kpi") or {}).get("primary") or "primary")
+    if suffix in TABLE_EXT or (mime or "").split(";")[0].strip() == "text/csv":
+        delim = "\t" if suffix == ".tsv" else ","
+        _merge_data_card(store, project_id, profile_table(dest.name, data, metric, delim))
+    elif suffix in IMAGE_EXT:
+        _merge_data_card(store, project_id, profile_image(dest.name, suffix))
     hyp = None
     if role == "extra" and prompt.strip():
+        mechanism = prompt.strip()[:200]
+        text = expand_writeup(mechanism, f"{prompt.strip()}\nFile: {dest.name}", metric)
         fp = fingerprint_text(prompt, dest.name)
         node = store.add_tree_node(
             {
                 "project_id": project_id,
                 "kind": "hypothesis",
                 "title": prompt.strip()[:120],
-                "summary": f"{prompt.strip()}\nFile: {dest.name}",
+                "summary": text,
                 "status": "queued",
                 "payload": {"source": dest.name, "role": "extra"},
             }
@@ -94,9 +168,9 @@ def ingest_upload(
                 "project_id": project_id,
                 "line_id": "user-extra",
                 "type": "explore",
-                "mechanism": prompt.strip()[:200],
+                "mechanism": mechanism,
                 "fingerprint": fp,
-                "text": f"{prompt.strip()}\nFile: {dest.name}",
+                "text": text,
                 "status": "queued",
                 "node_id": node["id"],
             }

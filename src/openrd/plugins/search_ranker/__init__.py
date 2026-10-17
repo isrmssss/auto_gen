@@ -4,6 +4,66 @@ from datetime import datetime, timezone
 from typing import Any
 
 from openrd.core.context import Context
+from openrd.util.text import tokenize
+
+_GENERIC = {
+    "a",
+    "an",
+    "the",
+    "of",
+    "and",
+    "or",
+    "for",
+    "to",
+    "in",
+    "on",
+    "with",
+    "by",
+    "from",
+    "beat",
+    "beating",
+    "state",
+    "art",
+    "method",
+    "methods",
+    "paper",
+    "papers",
+    "github",
+    "implementation",
+    "alternative",
+    "approaches",
+    "approach",
+    "evaluation",
+    "protocol",
+    "feature",
+    "engineering",
+    "limitation",
+    "limitations",
+    "fails",
+    "fail",
+    "why",
+    "using",
+    "use",
+    "based",
+    "via",
+    "new",
+    "vs",
+    "into",
+    "than",
+    "this",
+    "that",
+    "task",
+    "stated",
+}
+_METRICS = {"rmsle", "rmse", "mae", "mape", "auc", "f1", "logloss", "accuracy"}
+
+
+def focus_terms(focus: str) -> set[str]:
+    terms = set()
+    for token in tokenize(focus):
+        if token in _METRICS or (len(token) >= 3 and token not in _GENERIC):
+            terms.add(token)
+    return terms
 
 
 def _year(hit: dict[str, Any]) -> int | None:
@@ -17,8 +77,15 @@ def _year(hit: dict[str, Any]) -> int | None:
 
 
 class Ranker:
-    def rank(self, hits: list[dict[str, Any]], now_year: int | None = None) -> list[dict[str, Any]]:
+    def rank(
+        self,
+        hits: list[dict[str, Any]],
+        now_year: int | None = None,
+        *,
+        focus: str = "",
+    ) -> list[dict[str, Any]]:
         year_now = now_year or datetime.now(timezone.utc).year
+        wanted = focus_terms(focus)
         seen: set[str] = set()
         scored = []
         approaches: list[str] = []
@@ -47,6 +114,11 @@ class Ranker:
             if h.get("source") == "github" and stars >= 100:
                 score += 1.5
             title = (h.get("title") or "").lower()
+            blob = f"{title} {(h.get('snippet') or '').lower()}"
+            overlap = wanted & set(tokenize(blob)) if wanted else set()
+            if wanted and not overlap:
+                continue
+            score += 2.0 * len(overlap)
             diversity_bonus = 0.4 if not any(w in title for w in approaches[-3:]) else 0
             score += diversity_bonus
             approaches.append(title[:40])

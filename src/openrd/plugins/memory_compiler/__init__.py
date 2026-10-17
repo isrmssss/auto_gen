@@ -10,6 +10,7 @@ from openrd.util.text import clip_tokens
 
 _EVENT_KEEP = {
     "phase.enter",
+    "cycle.summary",
     "hypothesis.rejected",
     "hypothesis.selected",
     "run.finished",
@@ -55,6 +56,11 @@ class Compiler:
         hyp_lines = [f"- {h['type']} {h['status']} :: {h['mechanism'][:100]}" for h in hyps]
         cemetery = self.store.list_cemetery(self.project_id)[-8:]
         cem_lines = [f"- {c['mechanism_class']}: {c['lesson'][:140]}" for c in cemetery]
+        hints = [
+            n["title"]
+            for n in self.store.list_tree(self.project_id)
+            if n.get("kind") == "method"
+        ][:8]
         claims = self.store.list_claims(self.project_id)
         claim_lines = [f"- {c['claim_type']}:{c['claim_key']}" for c in claims[-8:]]
         events = self.store.list_events(
@@ -79,6 +85,8 @@ class Compiler:
                 "\n".join(hyp_lines) or "(none)",
                 "# Cemetery",
                 "\n".join(cem_lines) or "(none)",
+                "# Method hints (catalog only, not hypotheses)",
+                "\n".join(f"- {title}" for title in hints) or "(none)",
                 "# Blackboard claims",
                 "\n".join(claim_lines) or "(none)",
                 "# Last events",

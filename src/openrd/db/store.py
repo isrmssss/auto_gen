@@ -514,7 +514,18 @@ class Store:
         )
 
     # --- tree ---
+    _SINGLE_NODE_KINDS = {"goal", "formalize", "domain", "structure", "method"}
+
     def add_tree_node(self, node: dict[str, Any]) -> dict[str, Any]:
+        kind = node["kind"]
+        title = node["title"]
+        if kind in self._SINGLE_NODE_KINDS:
+            existing = self.query_one(
+                "SELECT * FROM tree_nodes WHERE project_id=? AND kind=? AND title=?",
+                (node["project_id"], kind, title),
+            )
+            if existing:
+                return self._hydrate_tree(existing)
         nid = node.get("id") or _uid()
         self.execute(
             """INSERT INTO tree_nodes(

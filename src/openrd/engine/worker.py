@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 from typing import Any
 
@@ -12,9 +13,8 @@ from openrd.core.events import (
     HYPOTHESIS_PROPOSED,
     HYPOTHESIS_REJECTED,
     HYPOTHESIS_SELECTED,
+    HUMAN_QUESTION,
     PAPER_INGESTED,
-    PHASE_ENTER,
-    PHASE_EXIT,
     PROJECT_SOLVED,
     ROLLBACK,
     RUN_FAILED,
@@ -23,10 +23,10 @@ from openrd.core.events import (
     SAFETY_BLOCK,
     SEARCH_HIT,
     SEARCH_QUERY,
-    SEARCH_SKIPPED,
     THOUGHT,
     TREE_NODE,
 )
+from openrd.plugins.rnd_quality_bar import champion_is_set, expand_writeup
 from openrd.core.loader import load_into
 from openrd.core.profile import load_profile, profiles_dir
 from openrd.db.store import Store, get_store
@@ -37,6 +37,19 @@ from openrd.settings import settings
 from openrd.util.canon import fingerprint_text, mechanism_key
 from openrd.util.embed import hashing_embed
 from openrd.util.text import clip_tokens
+
+_STATUS_CODE = re.compile(r"\b(401|403|429|500|502|503)\b")
+
+
+def _source_status(exc: Exception) -> str:
+    text = str(exc)
+    found = _STATUS_CODE.search(text)
+    if found:
+        return found.group(1)
+    if "Expecting value" in text or "JSONDecodeError" in text or "json" in text.lower():
+        return "bad_json"
+    return type(exc).__name__
+
 
 PHASES = [
     "understand",
@@ -66,6 +79,9 @@ class ProjectRuntime:
         self.last_code: str = ""
         self.last_run: dict[str, Any] | None = None
         self.root_id: str | None = None
+        self._empty_streak = 0
+        self._quiet_sources: dict[str, str] = {}
+        self._stats = self._fresh_stats()
 
     def _project(self) -> dict[str, Any]:
         p = self.store.get_project(self.project_id)
@@ -127,7 +143,39 @@ class ProjectRuntime:
         if self.ctx.has("funnel"):
             self.ctx.require("funnel").bind(self.ctx, self.project_id)
 
+    def _fresh_stats(self) -> dict[str, Any]:
+        return {
+            "new_queries": 0,
+            "skipped_queries": 0,
+            "skipped_papers": 0,
+            "new_hits": 0,
+            "rejected": 0,
+            "survived": 0,
+            "runs": 0,
+            "source_errors": {},
+            "metrics": {},
+            "planner_error": "",
+            "search_exhausted": False,
+        }
+
+    def _note_event(self, typ: str, payload: dict[str, Any] | None) -> None:
+        stats = getattr(self, "_stats", None)
+        if not stats:
+            return
+        body = payload or {}
+        if typ == SEARCH_QUERY:
+            stats["new_queries"] += 1
+        elif typ == SEARCH_HIT:
+            stats["new_hits"] += 1
+        elif typ == HYPOTHESIS_REJECTED:
+            stats["rejected"] += 1
+        elif typ == RUN_STARTED:
+            stats["runs"] += 1
+        elif typ == RUN_FINISHED and body.get("metrics"):
+            stats["metrics"] = body["metrics"]
+
     async def emit(self, typ: str, payload: dict[str, Any] | None = None, node_id: str | None = None, agent: str = "orchestrator") -> dict[str, Any]:
+        self._note_event(typ, payload)
         if self.ctx.has("journal"):
             return await self.ctx.require("journal").write(typ, payload, agent_id=agent, node_id=node_id)
         return self.store.append_event(self.project_id, typ, payload or {}, agent_id=agent, node_id=node_id)
@@ -151,16 +199,11 @@ class ProjectRuntime:
                 if self.ctx.has("graph"):
                     gid = self.ctx.require("graph").node("goal", p["name"], {"goal": p["goal"]}, node_id=self.root_id)
                     self.ctx.require("graph").edge(gid, gid, "self")
-        self.store.update_project(self.project_id, status="running")
         await self.emit("project.started", {"cycle": self.cycle})
         if not p.get("provider_id"):
-            await self.emit(
-                "provider.missing",
-                {
-                    "reason": "no_provider",
-                    "detail": "No model provider. Funnel runs; LLM steps skipped.",
-                },
-            )
+            await self._pause_for("no_provider", detail="No model provider. Loop not started.")
+            return
+        self.store.update_project(self.project_id, status="running")
         self.task = asyncio.create_task(self._loop(), name=f"openrd-{self.project_id}")
 
     async def stop(self) -> None:
@@ -186,10 +229,14 @@ class ProjectRuntime:
             self.ctx.require("human").pause = False
             self.ctx.require("human").stop = False
         status = self._project()["status"]
-        self.store.update_project(self.project_id, status="running")
         await self.emit("project.resumed", {"from": status})
+        if not self._project().get("provider_id"):
+            await self._pause_for("no_provider", detail="No model provider. Loop not started.")
+            return
+        self.store.update_project(self.project_id, status="running")
         if not self.task or self.task.done():
             self.load_plugins()
+            self._empty_streak = 0
             self.task = asyncio.create_task(self._loop(), name=f"openrd-{self.project_id}")
 
     async def rollback(self, node_id: str) -> None:
@@ -206,6 +253,78 @@ class ProjectRuntime:
                 f"Rolled back to {node.get('title')}: {node.get('summary')}",
             )
 
+    async def _pause_for(self, reason: str, detail: str = "") -> None:
+        if self.ctx.has("human"):
+            self.ctx.require("human").pause = True
+        self.store.update_project(self.project_id, status="paused")
+        if reason == "no_provider":
+            await self.emit(
+                "provider.missing",
+                {"reason": "no_provider", "detail": detail or "No model provider."},
+            )
+        await self.emit("cycle.stalled", {"reason": reason, "cycles": self.cycle, "detail": detail})
+        await self.emit("project.paused", {"reason": reason})
+
+    def _cycle_made_progress(self) -> bool:
+        stats = self._stats
+        return bool(stats["new_queries"] or stats["survived"] or stats["runs"])
+
+    def _stall_reason(self) -> str:
+        if not self._project().get("provider_id"):
+            return "no_provider"
+        mem = self.store.get_memory(self.project_id)
+        has_input = any(
+            a.get("role") == "input" for a in self.store.list_artifacts(self.project_id)
+        )
+        if has_input and not (mem.get("data_card") or "").strip():
+            return "no_data_card"
+        if self._stats.get("search_exhausted"):
+            return "search_exhausted"
+        if self._stats["rejected"] and not self._stats["survived"]:
+            return "all_rejected"
+        return "search_exhausted" if self._stats["skipped_queries"] else "all_rejected"
+
+    async def _emit_cycle_summary(self) -> None:
+        stats = self._stats
+        await self.emit(
+            "cycle.summary",
+            {
+                "cycle": self.cycle,
+                "new_queries": stats["new_queries"],
+                "skipped_queries": stats["skipped_queries"],
+                "skipped_papers": stats["skipped_papers"],
+                "new_hits": stats["new_hits"],
+                "rejected": stats["rejected"],
+                "survived": stats["survived"],
+                "runs": stats["runs"],
+                "source_errors": stats["source_errors"],
+                "metrics": stats["metrics"],
+                "planner_error": stats["planner_error"],
+            },
+        )
+
+    async def _ask_about_hypothesis(self, hyp: dict[str, Any], reasons: Any) -> None:
+        hid = str(hyp.get("id") or "")
+        question = (
+            f"Hypothesis {hid} ({hyp.get('mechanism') or ''}) was not rejected outright. "
+            f"Add a mechanism, what stays frozen, and the expected KPI effect. Reasons: {reasons}"
+        )
+        open_asks = [
+            a
+            for a in self.store.list_asks(self.project_id)
+            if a.get("status") == "open" and hid and hid in (a.get("question") or "")
+        ]
+        if not open_asks:
+            self.store.add_ask(
+                {"project_id": self.project_id, "kind": "clarify", "question": question}
+            )
+            await self.emit(
+                HUMAN_QUESTION,
+                {"kind": "clarify", "hypothesis_id": hid, "reasons": reasons},
+            )
+        if hid:
+            self.store.update_hypothesis(hid, status="needs_human")
+
     async def _loop(self) -> None:
         try:
             while True:
@@ -220,21 +339,28 @@ class ProjectRuntime:
                 await self._consume_human()
                 await self._advance_jobs()
                 self.cycle += 1
+                self._stats = self._fresh_stats()
                 for phase in PHASES:
                     self.current_phase = phase
-                    await self.emit(PHASE_ENTER, {"phase": phase, "cycle": self.cycle})
                     await getattr(self, f"phase_{phase}")()
-                    await self.emit(PHASE_EXIT, {"phase": phase, "cycle": self.cycle})
                     if self._project()["status"] in {"stopped", "solved"}:
                         return
                     human = self.ctx.get("human")
                     if human and human.stop:
                         return
+                await self._emit_cycle_summary()
                 export_knowledge(
                     self.store,
                     self.project_id,
                     Path(self._project()["workspace_path"]) / "knowledge",
                 )
+                if not self._cycle_made_progress():
+                    self._empty_streak += 1
+                else:
+                    self._empty_streak = 0
+                if self._empty_streak >= 2:
+                    await self._pause_for(self._stall_reason())
+                    return
                 await asyncio.sleep(0.6)
         except asyncio.CancelledError:
             raise
@@ -289,14 +415,11 @@ class ProjectRuntime:
             formal = funnel.formalize(p)
             funnel.maybe_noise_job(p)
             await self.emit("funnel.step", {"level": 0, **formal})
-        await self.emit(
-            THOUGHT,
-            {"text": f"Goal: {(p.get('goal') or '')[:400]} Prompt: {(p.get('prompt') or '')[:400]}"},
-        )
-        if self.ctx.has("compiler"):
-            extra = p.get("prompt") or p["goal"]
-            brief = self.ctx.require("compiler").brief("understand", extra)
-            await self.emit(THOUGHT, {"text": brief[:1500], "kind": "brief"})
+        if self.cycle == 1:
+            await self.emit(
+                THOUGHT,
+                {"text": f"Goal: {(p.get('goal') or '')[:400]} Prompt: {(p.get('prompt') or '')[:400]}"},
+            )
 
     async def phase_research(self) -> None:
         p = self._project()
@@ -319,10 +442,20 @@ class ProjectRuntime:
         if not planner:
             return
         memory = ""
+        card = ""
         if self.ctx.has("memory_core"):
-            memory = self.ctx.require("memory_core").get().get("open_questions") or ""
+            blocks = self.ctx.require("memory_core").get()
+            memory = blocks.get("open_questions") or ""
+            card = blocks.get("data_card") or ""
         digest = archive.digest() if archive and hasattr(archive, "digest") else ""
-        queries = await planner.plan(p["goal"], extra=clip_tokens(f"{memory}\n\n{digest}", 800))
+        queries = await planner.plan(
+            p["goal"],
+            extra=clip_tokens(f"{card}\n\n{memory}\n\n{digest}", 800),
+        )
+        if not queries:
+            self._stats["search_exhausted"] = True
+            self._stats["planner_error"] = getattr(planner, "last_error", "") or "no queries"
+            return
         available = {
             name: self.ctx.get(name)
             for name in (
@@ -347,16 +480,20 @@ class ProjectRuntime:
         async def run_one(q: dict[str, Any]) -> None:
             query = q["q"]
             if archive and not archive.claim_query(query):
-                await self.emit(SEARCH_SKIPPED, {"query": query, "reason": "already tried"})
+                self._stats["skipped_queries"] += 1
                 return
             await self.emit(SEARCH_QUERY, {"query": query, "intent": q.get("intent")})
             chosen = sources_for_intent(q.get("intent") or "papers", query, set(available))
             for name in chosen:
+                if name in self._quiet_sources:
+                    continue
                 svc = available[name]
                 try:
                     batch = await svc.search(query, count=5)
                 except Exception as exc:
-                    await self.emit(THOUGHT, {"text": f"{name} failed: {exc}"})
+                    status = _source_status(exc)
+                    self._quiet_sources[name] = status
+                    self._stats["source_errors"][name] = status
                     continue
                 for raw in batch:
                     hit = dict(raw)
@@ -364,13 +501,10 @@ class ProjectRuntime:
                     url = hit.get("url") or ""
                     title = (hit.get("title") or "")[:160]
                     if archive and key and not archive.remember("paper", key, title=title):
-                        await self.emit(
-                            SEARCH_SKIPPED,
-                            {"paper_key": key, "reason": "already have this paper"},
-                        )
+                        self._stats["skipped_papers"] += 1
                         continue
                     if archive and url and archive.seen_url(url):
-                        await self.emit(SEARCH_SKIPPED, {"url": url, "reason": "duplicate_url"})
+                        self._stats["skipped_papers"] += 1
                         continue
                     claimed = hit.get("url_canon") or url
                     if url and not self.store.claim(self.project_id, "url", claimed, "research"):
@@ -400,14 +534,16 @@ class ProjectRuntime:
         else:
             for q in queries[:8]:
                 await run_one(q)
+        if queries and self._stats["new_queries"] == 0:
+            self._stats["search_exhausted"] = True
+        metric = str((p.get("kpi") or {}).get("primary") or "")
+        focus = " ".join(
+            bit for bit in (p.get("goal") or "", p.get("prompt") or "", card, metric) if bit
+        )
         ranked: list[dict[str, Any]] = hits
         if ranker:
-            ranked = ranker.rank(hits)
-            await self.emit(
-                THOUGHT,
-                {"text": f"ranked {len(ranked)} new hits", "top": [h.get("title") for h in ranked[:5]]},
-            )
-        await self._read_fulltexts(ranked, p["goal"])
+            ranked = ranker.rank(hits, focus=focus)
+        await self._read_fulltexts(ranked, focus or p["goal"])
 
     async def _read_fulltexts(self, ranked: list[dict[str, Any]], focus: str) -> None:
         archive = self.ctx.get("archive")
@@ -510,6 +646,12 @@ class ProjectRuntime:
                     "domains": [d.get("id") for d in domains],
                 },
             )
+            champion = ""
+            if self.ctx.has("memory_core"):
+                champion = self.ctx.require("memory_core").get().get("champion") or ""
+            if seeded and not champion_is_set(champion):
+                self.current_hyps = seeded
+                return
         scientist = self.ctx.get("scientist")
         policy = self.ctx.get("search_policy")
         if not scientist or not p.get("provider_id"):
@@ -581,7 +723,10 @@ class ProjectRuntime:
         safety = self.ctx.get("safety")
         kept: list[dict[str, Any]] = []
         p = self._project()
-        champion = (self.ctx.require("memory_core").get().get("champion") if self.ctx.has("memory_core") else "") or ""
+        mem = self.ctx.require("memory_core").get() if self.ctx.has("memory_core") else {}
+        champion = mem.get("champion") or ""
+        card = mem.get("data_card") or ""
+        metric = str((p.get("kpi") or {}).get("primary") or "primary")
         n_think = max(1, int(p.get("think_slots") or 4))
         for h in self.current_hyps:
             mech = h.get("mechanism") or ""
@@ -608,14 +753,37 @@ class ProjectRuntime:
                 await self.emit(HYPOTHESIS_REJECTED, h, node_id=h.get("node_id"))
                 self.store.update_hypothesis(h["id"], status="rejected")
                 continue
-            if quality:
-                q = await quality.judge(p["goal"], mech, h.get("text") or "", champion)
+            text = h.get("text") or ""
+            if len(text.split()) < 25:
+                text = expand_writeup(mech, text, metric)
+                h["text"] = text
+                if h.get("id"):
+                    self.store.update_hypothesis(h["id"], text=text)
+            first_baseline = h.get("line_id") in {"baseline", "decode"} and not champion_is_set(champion)
+            if quality and not first_baseline:
+                q = await quality.judge(
+                    p["goal"],
+                    mech,
+                    text,
+                    champion,
+                    has_data_card=bool(card.strip()),
+                )
+                if not q.get("ok"):
+                    if h.get("line_id") == "user-extra":
+                        await self._ask_about_hypothesis(h, q.get("reasons"))
+                        continue
+                    h["reject_reason"] = q.get("reasons")
+                    await self.emit(HYPOTHESIS_REJECTED, h, node_id=h.get("node_id"))
+                    self.store.update_hypothesis(h["id"], status="rejected")
+                    continue
+            elif quality and first_baseline:
+                q = quality.cheap_check(mech, text, champion=champion, has_data_card=bool(card.strip()))
                 if not q.get("ok"):
                     h["reject_reason"] = q.get("reasons")
                     await self.emit(HYPOTHESIS_REJECTED, h, node_id=h.get("node_id"))
                     self.store.update_hypothesis(h["id"], status="rejected")
                     continue
-            if debate:
+            if debate and not first_baseline:
                 d = await debate.run(h, n_think=min(3, n_think))
                 h["debate"] = d
                 if d.get("veto"):
@@ -625,12 +793,12 @@ class ProjectRuntime:
                     continue
             kept.append(h)
         self.current_hyps = kept
+        self._stats["survived"] = len(kept)
 
     async def phase_select(self) -> None:
         ve = self.ctx.get("virtual_eval")
         if not self.current_hyps:
             self.selected = None
-            await self.emit(THOUGHT, {"text": "no hypotheses survived critique"})
             return
         if ve:
             picked = await ve.pick(self.current_hyps[: settings.virtual_eval_k])
